@@ -106,6 +106,12 @@ void testArmAndTable()
 	check(engine.configureTuning(retuner::kTuningEqualTemperament, 2.0), "configure 12-TET");
 	check(engine.isTableValid(), "12-TET table valid");
 	check(engine.target(60).mapped && engine.target(60).bend == 8192, "12-TET C4");
+	for (int key = 0; key < 128; ++key)
+	{
+		check(engine.target(key).mapped, "12-TET all keys mapped");
+		check(engine.target(key).note == key, "12-TET base note");
+		check(engine.target(key).bend == 8192, "12-TET centred");
+	}
 	check(engine.arm(), "arm 12-TET");
 	check(engine.isArmed(), "armed");
 	engine.disarm();
@@ -162,6 +168,41 @@ void testVoiceAllocation()
 	check(rec.messages.size() == 2, "reuse sends bend then on");
 	checkMessage(rec.messages[0], 0xE1, 0x00, 0x40, "reused bend");
 	checkMessage(rec.messages[1], 0x91, 0x48, 0x64, "reused on");
+}
+
+/* AC2: JI C/E/G overlap keeps independent, non-centred bends. */
+void testJustIntonationOverlap()
+{
+	Recorder rec;
+	retuner::Engine engine;
+	engine.setOutput(rec.out());
+	engine.configureTuning(retuner::kTuningJustC, 2.0);
+	engine.arm();
+
+	engine.processChannelMessage(0x90, 60, 100);
+	engine.processChannelMessage(0x90, 64, 100);
+	engine.processChannelMessage(0x90, 67, 100);
+
+	check(rec.messages.size() == 6, "JI C/E/G sends three pairs");
+	checkMessage(rec.messages[0], 0xE0, 0x00, 0x40, "JI C4 bend");
+	checkMessage(rec.messages[1], 0x90, 0x3C, 0x64, "JI C4 on");
+	checkMessage(rec.messages[2], 0xE1, 0x4F, 0x3B, "JI E4 bend");
+	checkMessage(rec.messages[3], 0x91, 0x40, 0x64, "JI E4 on");
+	checkMessage(rec.messages[4], 0xE2, 0x50, 0x40, "JI G4 bend");
+	checkMessage(rec.messages[5], 0x92, 0x43, 0x64, "JI G4 on");
+
+	/* Releasing E4 must not retune or terminate C4/G4. */
+	rec.clear();
+	engine.processChannelMessage(0x80, 64, 0);
+	check(rec.only(0x81, 0x40, 0x00), "only JI E4 off");
+	check(engine.voicesInUse() == 2, "JI two voices remain");
+
+	/* Reuse the freed voice with a different, non-centred bend. */
+	rec.clear();
+	engine.processChannelMessage(0x90, 69, 100);
+	check(rec.messages.size() == 2, "JI reuse sends bend then on");
+	checkMessage(rec.messages[0], 0xE1, 0x7F, 0x3A, "JI A4 reuse bend");
+	checkMessage(rec.messages[1], 0x91, 0x45, 0x64, "JI A4 reuse on");
 }
 
 /* AC2: a retuned voice sends its own bend before the note-on. */
@@ -471,6 +512,7 @@ int main()
 	testPitchFor();
 	testArmAndTable();
 	testVoiceAllocation();
+	testJustIntonationOverlap();
 	testBendBeforeOn();
 	testRepeatsAndOffs();
 	testUnmappedKey();

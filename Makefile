@@ -108,6 +108,8 @@ inspect: $(OUTPUT)
 	@$(ARM_NM) --defined-only $(OUTPUT) | grep -Eq '[[:space:]]pluginEntry$$' \
 		|| (echo "pluginEntry export is missing" >&2; exit 1)
 	@echo "PASS: $(OUTPUT) is a little-endian relocatable ARM plugin with pluginEntry"
+	@$(ARM_NM) -u $(OUTPUT) | awk '{print $$2}' | sort -u | grep -Ev '^(NT_algorithmIndex|NT_drawText|NT_intToString|NT_parameterOffset|NT_sendMidi3ByteMessage|NT_setParameterFromUi|log2|memset)$$' \
+		&& { echo "Unexpected undefined symbol(s) in $(OUTPUT)" >&2; exit 1; } || true
 	@echo "Review undefined symbols against the pinned API/runtime:"
 	@$(ARM_NM) -u $(OUTPUT) || true
 else
