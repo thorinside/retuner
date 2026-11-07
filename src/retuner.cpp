@@ -409,18 +409,17 @@ bool draw(_NT_algorithm* self)
 	const retuner::Engine& engine = algorithm->engine;
 	char buff[32];
 
-	NT_drawText(0, 10, "Scale:");
-	NT_drawText(56, 10, algorithm->scaleName[0] ? algorithm->scaleName : "12-TET");
+	NT_drawText(0, 30, "Scale:");
+	NT_drawText(56, 30, algorithm->scaleName[0] ? algorithm->scaleName : "12-TET");
 
-	NT_drawText(0, 20, "Arm:");
-	NT_drawText(40, 20, engine.isArmed() ? "On" : "Off");
-
-	NT_drawText(0, 30, "Voices:");
+	NT_drawText(0, 40, "Arm:");
+	NT_drawText(40, 40, engine.isArmed() ? "On" : "Off");
+	NT_drawText(72, 40, "Voices:");
 	NT_intToString(buff, engine.voicesInUse());
-	NT_drawText(64, 30, buff);
+	NT_drawText(120, 40, buff);
 
-	NT_drawText(0, 40, "Table:");
-	NT_drawText(56, 40, engine.isTableValid() ? "Valid" : "Invalid");
+	NT_drawText(0, 50, "Table:");
+	NT_drawText(56, 50, engine.isTableValid() ? "Valid" : "Invalid");
 
 	const char* status = nullptr;
 	if (algorithm->scaleError)
@@ -481,7 +480,7 @@ bool draw(_NT_algorithm* self)
 		}
 	}
 	if (status)
-		NT_drawText(0, 50, status);
+		NT_drawText(0, 60, status);
 
 	return false;
 }
