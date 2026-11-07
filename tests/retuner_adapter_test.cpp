@@ -61,6 +61,8 @@ int failures = 0;
 _NT_sclNote equalTemperamentNotes[12];
 _NT_sclNote justNotes[12];
 _NT_sclNote negativeCentsNotes[2];
+_NT_sclNote negativeOctaveNotes[2];
+_NT_sclNote ambiguousRatioNotes[2];
 
 void setRatio(_NT_sclNote& note, int32_t numerator, int32_t denominator)
 {
@@ -82,6 +84,10 @@ void resetScaleStub()
 
 	negativeCentsNotes[0].octaves = -5.0 / 1200.0;
 	setRatio(negativeCentsNotes[1], 2, 1);
+	negativeOctaveNotes[0].octaves = -1.0;
+	setRatio(negativeOctaveNotes[1], 2, 1);
+	setRatio(ambiguousRatioNotes[0], 1075838977, 1075838976);
+	setRatio(ambiguousRatioNotes[1], 2, 1);
 
 	stub.mounted = true;
 	stub.numScl = 1;
@@ -293,25 +299,81 @@ void testArmedRemountClampDisarms()
 	      "remount clamp writes Arm off");
 }
 
-/* Scala permits negative cents; isRatio() must not misdecode them as ratios. */
-void testNegativeCentsScale()
+/* Ambiguous union entries are rejected rather than turned into wrong pitches. */
+void expectAmbiguousRejected(_NT_sclNote* notes, const char* what)
 {
 	Fixture f;
-	stub.notes = negativeCentsNotes;
+	stub.notes = notes;
 	stub.numNotes = 2;
-	stub.scaleName = "negative-cents.scl";
-	f.step(); /* mount and load */
+	stub.scaleName = "ambiguous.scl";
+	f.step(); /* mount and attempt to load */
+	f.values[2] = 200;
+	f.changed(2);
+	f.resetStub();
+	f.values[3] = 1;
+	f.changed(3);
+	f.step();
+	check(stub.setCalls == 1 && stub.setValue == 0, what);
+}
+
+void testAmbiguousScalesRejected()
+{
+	expectAmbiguousRejected(negativeCentsNotes, "negative cents scale rejected");
+	expectAmbiguousRejected(negativeOctaveNotes, "negative octave scale rejected");
+	expectAmbiguousRejected(ambiguousRatioNotes, "ambiguous packed ratio rejected");
+}
+
+/* A deferred read from the old card must not become the new card's scale. */
+void testStaleReadAcrossRemount()
+{
+	Fixture f;
+	stub.notes = justNotes;
+	stub.deferCallback = true;
+	f.step(); /* mount card A, start JI read */
+	check(stub.pendingCallback != nullptr, "old card read started");
+
+	stub.mounted = false;
+	f.step();
+	stub.notes = equalTemperamentNotes;
+	stub.mounted = true;
+	f.step();
+	check(stub.pendingCallback != nullptr, "old read still owns the request");
+
+	stub.completeRead(); /* old card result arrives after remount */
+	f.step();
+	check(stub.pendingCallback != nullptr, "stale result discarded and refetched");
+
+	stub.completeRead(); /* new card result */
+	f.step();
 	f.values[2] = 200;
 	f.changed(2);
 	f.values[3] = 1;
 	f.changed(3);
 	f.resetStub();
 
-	factory()->midiMessage(f.algorithm, 0x90, 61, 100);
-	check(stub.messages.size() == 2, "negative cents sends bend then on");
-	check(stub.messages[0].b0 == 0xE0, "negative cents uses channel 1 bend");
-	check(stub.messages[1].b0 == 0x90 && stub.messages[1].b1 == 0x3C,
-	      "negative cents stays based on middle C, not a misdecoded ratio");
+	factory()->midiMessage(f.algorithm, 0x90, 64, 100);
+	check(stub.messages.size() == 2, "new card scale sends bend then on");
+	check(stub.messages[0].b1 == 0x00 && stub.messages[0].b2 == 0x40,
+	      "remount uses 12-TET, not the old JI bend");
+}
+
+/* An empty-library remount still clamps the selector to max 0. */
+void testEmptyLibraryClamp()
+{
+	Fixture f;
+	stub.numScl = 2;
+	f.step();
+	f.values[1] = 1;
+	f.changed(1);
+
+	stub.mounted = false;
+	f.step();
+	stub.numScl = 0;
+	stub.mounted = true;
+	f.step();
+
+	check(f.values[1] == 0, "empty library resets selector to zero");
+	check(f.algorithm->parameters[1].max == 0, "empty library parameter max is zero");
 }
 
 /* nt_helper's community Scala editor matches the parameter name pattern. */
@@ -569,7 +631,9 @@ int main()
 	testMidiForwarding();
 	testNoCardFallback();
 	testArmedRemountClampDisarms();
-	testNegativeCentsScale();
+	testAmbiguousScalesRejected();
+	testStaleReadAcrossRemount();
+	testEmptyLibraryClamp();
 	testScaleParameterName();
 	testOutputModeForwarding();
 	testScaleLoadRetunes();

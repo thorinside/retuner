@@ -417,10 +417,24 @@ public:
 				send((uint8_t)(0x80 | voices[i].channel), voices[i].note, 0);
 				voices[i].occupied = 0;
 			}
-			if (outputMode != kOutputPerChannel)
+			if (outputMode == kOutputMonumatic)
+			{
 				send((uint8_t)(0xB0 | (base + i)), 64, 0);  /* sustain off */
-			send((uint8_t)(0xB0 | (base + i)), 120, 0); /* all sound off */
+				send((uint8_t)(0xB0 | (base + i)), 120, 0); /* all sound off */
+			}
+			else if (outputMode == kOutputPerChannel)
+			{
+				send((uint8_t)(0xB0 | (base + i)), 120, 0); /* all sound off */
+			}
 		}
+
+		if (outputMode == kOutputMpe)
+		{
+			/* MPE zone controls belong on the lower-zone master. */
+			send(0xB0, 64, 0);
+			send(0xB0, 120, 0);
+		}
+
 		for (int i = 0; i < kChannels; ++i)
 			send((uint8_t)(0xE0 | (base + i)), 0, 64);
 

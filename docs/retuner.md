@@ -74,6 +74,11 @@ MIDI note 60 is C4 = 261.625565300599 Hz. This is the only absolute pitch
 anchor; the `.scl` file supplies the intervals above it. The plugin does not
 read a `.kbm` file, reference frequency or alternate root from the card.
 
+Negative cents are not supported through this SDK union. If an entry's packed
+ratio/cents representation is ambiguous, the plugin rejects the scale instead of
+emitting a wrong pitch. Ordinary positive cents and ordinary ratios are
+unaffected.
+
 If a key's target would be outside the receiver's representable MIDI range
 (0–127 plus the configured bend range), that key is intentionally silent. It
 is not folded to a neighbour. If a target is inside that range but needs more
@@ -121,7 +126,8 @@ Lower-zone MPE: master channel 1, member channels 2–9, eight members. Notes an
 bends go to the members only. Arming sends the standard MPE Configuration RPN 6
 (eight members) and Pitch Bend Sensitivity RPN 0 with the configured `Bend
 Range` on each member. The master channel receives no notes or bends. Panic
-sends note-offs, CC64 = 0, CC120 = 0 and centred bends on the members only.
+sends stored member note-offs and centred member bends, with CC64 = 0 and
+CC120 = 0 on the lower-zone master channel 1.
 
 Use this profile for a Bitwig MPE instrument or another lower-zone MPE receiver.
 If the receiver ignores incoming RPN, set its MPE bend range to the same `R`
@@ -154,12 +160,12 @@ a voice, not a master, so the MPE configuration would not describe the receiver.
   forwarded.
 - **CC123** on the selected channel: ignored. Note-offs own the note lifecycle;
   use `Arm` Off for an intentional all-notes-off.
-- **CC120/CC121** on the selected channel: hard panic. The kill sequence
-  follows `Output`: Monumatic/MPE send stored note-offs, CC64 = 0, CC120 = 0
-  and centred bends; Per Ch Bend sends note-offs, CC120 = 0 and centred bends.
-  The channels are 1–8 for Monumatic/Per Ch Bend and members 2–9 for MPE. State
-  clears but `Arm` stays on, so a source reset does not silently disarm the
-  retuner. CC121 is never forwarded as a receiver reset.
+- **CC120/CC121** on the selected channel: hard panic. Monumatic sends stored
+  note-offs, CC64 = 0, CC120 = 0 and centred bends on channels 1–8; Per Ch Bend
+  sends note-offs, CC120 = 0 and centred bends; MPE sends stored member
+  note-offs, CC64 = 0 and CC120 = 0 on master channel 1, then centred member
+  bends. State clears but `Arm` stays on, so a source reset does not silently
+  disarm the retuner. CC121 is never forwarded as a receiver reset.
 - **Realtime Stop (0xFC):** ignored, because some sources emit it during
   ordinary navigation. Use CC120/CC121 or `Arm` Off for an intentional stop.
 - **System Reset (0xFF):** clear notes and bends but leave `Arm` on.

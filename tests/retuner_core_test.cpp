@@ -374,11 +374,19 @@ void testOutputModes()
 
 	rec.clear();
 	mpe.processChannelMessage(0xB0, 120, 0);
-	bool usedMaster = false;
+	bool sawMasterSustain = false, sawMasterSoundOff = false, sawMemberControl = false;
 	for (const Message& m : rec.messages)
-		if ((m.b0 & 0x0F) == 0)
-			usedMaster = true;
-	check(!usedMaster, "MPE panic leaves master channel silent");
+	{
+		if (m.b0 == 0xB0 && m.b1 == 64)
+			sawMasterSustain = true;
+		if (m.b0 == 0xB0 && m.b1 == 120)
+			sawMasterSoundOff = true;
+		if ((m.b0 & 0xF0) == 0xB0 && (m.b0 & 0x0F) != 0 &&
+		    (m.b1 == 64 || m.b1 == 120))
+			sawMemberControl = true;
+	}
+	check(sawMasterSustain && sawMasterSoundOff, "MPE panic sends master zone controls");
+	check(!sawMemberControl, "MPE panic leaves member controls out");
 	checkMessage(rec.messages[0], 0x81, 0x3C, 0x00, "MPE panic off on member 2");
 
 	/* Changing output mode while armed panics and disarms. */

@@ -55,8 +55,9 @@ struct _retunerAlgorithm : public _NT_algorithm
 {
 	_retunerAlgorithm()
 		: engine(), params(), syncing(false), request(), notes(), scaleName(),
-		  pendingScale(0), cardMounted(false), awaitingCallback(false),
-		  dirty(false), scaleError(false), armOffPending(false) {}
+		  pendingScale(0), cardMounted(false), scaleCount(0), cardGeneration(0),
+		  requestGeneration(0), awaitingCallback(false), dirty(false),
+		  resultStale(false), scaleError(false), armOffPending(false) {}
 
 	retuner::Engine engine;
 	_NT_parameter params[kNumParams];
@@ -67,8 +68,12 @@ struct _retunerAlgorithm : public _NT_algorithm
 	char scaleName[24];
 	int pendingScale;
 	bool cardMounted;
+	uint32_t scaleCount;
+	uint32_t cardGeneration;
+	uint32_t requestGeneration;
 	bool awaitingCallback;
 	bool dirty;
+	bool resultStale;
 	bool scaleError;
 	bool armOffPending;
 };
@@ -153,28 +158,21 @@ bool buildScale(const _NT_sclNote* notes, uint32_t numNotes, retuner::Scale& sca
 		{
 			/*
 			 * isRatio() tests the denominator sign, which also matches the sign
-			 * bit of a negative cents double. Scala permits negative cents, so
-			 * decode a plausible small negative double as cents rather than as
-			 * a packed ratio. Genuine ratios produce NaN or an implausible
-			 * double in this union.
+			 * bit of a negative cents double. The union cannot distinguish a
+			 * legal negative-cents value from some legal packed ratios, so
+			 * reject ambiguous entries rather than emitting a wrong pitch.
 			 */
-			const double asCents = notes[i].octaves;
-			if (isfinite(asCents) && asCents < 0.0 && asCents > -1.0 &&
-			    asCents <= -1e-9)
-			{
-				octaves = asCents;
-			}
-			else
-			{
-				/* The parser stores a ratio denominator as a negative int32. */
-				if (notes[i].numeratorValue <= 0 ||
-				    notes[i].denominatorValue >= 0 ||
-				    notes[i].denominatorValue == INT32_MIN)
-					return false;
-				const int32_t numerator = notes[i].numeratorValue;
-				const int32_t denominator = -notes[i].denominatorValue;
-				octaves = log2Positive((double)numerator / (double)denominator);
-			}
+			if (isfinite(notes[i].octaves))
+				return false;
+
+			/* The parser stores a ratio denominator as a negative int32. */
+			if (notes[i].numeratorValue <= 0 ||
+			    notes[i].denominatorValue >= 0 ||
+			    notes[i].denominatorValue == INT32_MIN)
+				return false;
+			const int32_t numerator = notes[i].numeratorValue;
+			const int32_t denominator = -notes[i].denominatorValue;
+			octaves = log2Positive((double)numerator / (double)denominator);
 		}
 		else
 		{
@@ -210,7 +208,7 @@ void applyLoadedScale(_retunerAlgorithm* algorithm)
 
 void startScaleRequest(_retunerAlgorithm* algorithm, int index)
 {
-	if (!algorithm->cardMounted)
+	if (!algorithm->cardMounted || algorithm->scaleCount == 0)
 		return;
 	if (index < 0)
 		index = 0;
@@ -227,7 +225,9 @@ void startScaleRequest(_retunerAlgorithm* algorithm, int index)
 	algorithm->request.index = (uint32_t)index;
 	algorithm->request.error = false;
 	algorithm->request.numNotes = 0;
+	algorithm->requestGeneration = algorithm->cardGeneration;
 	algorithm->dirty = false;
+	algorithm->resultStale = false;
 	algorithm->scaleError = false;
 	algorithm->engine.invalidateTable();
 
@@ -250,11 +250,25 @@ void pollScale(_retunerAlgorithm* algorithm)
 		if (algorithm->dirty)
 		{
 			algorithm->dirty = false;
-			if (algorithm->cardMounted)
+			if (!algorithm->cardMounted)
+				algorithm->resultStale = true;
+			else if (algorithm->requestGeneration != algorithm->cardGeneration)
+			{
+				algorithm->resultStale = true;
+				algorithm->engine.invalidateTable();
+			}
+			else
 				applyLoadedScale(algorithm);
 			continue;
 		}
+		if (algorithm->resultStale && algorithm->cardMounted &&
+		    algorithm->scaleCount > 0 && !algorithm->awaitingCallback)
+		{
+			startScaleRequest(algorithm, algorithm->pendingScale);
+			continue;
+		}
 		if (!algorithm->awaitingCallback && algorithm->cardMounted &&
+		    algorithm->scaleCount > 0 &&
 		    (int)algorithm->request.index != algorithm->pendingScale)
 		{
 			startScaleRequest(algorithm, algorithm->pendingScale);
@@ -342,7 +356,7 @@ void parameterChanged(_NT_algorithm* self, int p)
 		if (index != algorithm->v[kParamScale])
 			syncScale(algorithm, index);
 		algorithm->pendingScale = index;
-		if (algorithm->cardMounted)
+		if (algorithm->cardMounted && algorithm->scaleCount > 0)
 		{
 			algorithm->engine.invalidateTable();
 			if (!algorithm->awaitingCallback)
@@ -390,37 +404,36 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4)
 	if (mounted != algorithm->cardMounted)
 	{
 		algorithm->cardMounted = mounted;
-		if (mounted)
-		{
-			const uint32_t count = NT_getNumScl();
-			uint32_t maximum32 = count > 0 ? count - 1 : 0;
-			if (maximum32 > 32767)
-				maximum32 = 32767;
-			const int16_t maximum = (int16_t)maximum32;
-			if (algorithm->params[kParamScale].max != maximum)
-			{
-				algorithm->params[kParamScale].max = maximum;
-				const int32_t index = NT_algorithmIndex(algorithm);
-				if (index >= 0)
-					NT_updateParameterDefinition((uint32_t)index, kParamScale);
-			}
+		++algorithm->cardGeneration;
 
-			if (count > 0)
-			{
-				int index = algorithm->v[kParamScale];
-				if (index < 0)
-					index = 0;
-				if (index > maximum)
-				{
-					index = maximum;
-					syncScale(algorithm, index);
-				}
-				algorithm->pendingScale = index;
-				if (!algorithm->engine.isArmed() &&
-				    !algorithm->awaitingCallback && !algorithm->dirty)
-					startScaleRequest(algorithm, index);
-			}
+		const uint32_t count = mounted ? NT_getNumScl() : 0;
+		algorithm->scaleCount = count;
+
+		uint32_t maximum32 = count > 0 ? count - 1 : 0;
+		if (maximum32 > 32767)
+			maximum32 = 32767;
+		const int16_t maximum = (int16_t)maximum32;
+		if (algorithm->params[kParamScale].max != maximum)
+		{
+			algorithm->params[kParamScale].max = maximum;
+			const int32_t index = NT_algorithmIndex(algorithm);
+			if (index >= 0)
+				NT_updateParameterDefinition((uint32_t)index, kParamScale);
 		}
+
+		int index = algorithm->v[kParamScale];
+		if (index < 0)
+			index = 0;
+		if (index > maximum)
+		{
+			index = maximum;
+			syncScale(algorithm, index);
+		}
+		algorithm->pendingScale = index;
+
+		if (count > 0 && !algorithm->engine.isArmed() &&
+		    !algorithm->awaitingCallback && !algorithm->dirty)
+			startScaleRequest(algorithm, index);
 	}
 
 	pollScale(algorithm);
