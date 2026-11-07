@@ -436,9 +436,6 @@ bool draw(_NT_algorithm* self)
 		case retuner::kPanicResetControllers:
 			status = "Panic: CC121";
 			break;
-		case retuner::kPanicStop:
-			status = "Panic: Stop";
-			break;
 		case retuner::kPanicReset:
 			status = "Panic: Reset";
 			break;

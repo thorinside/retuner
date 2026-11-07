@@ -149,8 +149,8 @@ void testVersionAndFactory()
 	check(f->guid == retuner::kGuid, "ThRt guid");
 }
 
-/* Finding 1: the host parameter index must include NT_parameterOffset(). */
-void testArmSyncUsesParameterOffset()
+/* Input panic clears notes and bends but leaves Arm on. */
+void testMidiPanicKeepsArm()
 {
 	Fixture f;
 	f.changed(0);
@@ -158,22 +158,18 @@ void testArmSyncUsesParameterOffset()
 	f.changed(2);
 	f.resetStub();
 
-	/* Valid table: arming does not need a sync write. */
 	f.values[3] = 1;
 	f.changed(3);
 	check(stub.setCalls == 0, "valid arm sends no sync write");
 
-	/* MIDI panic disarms and must push Arm back to Off on the next step. */
 	factory()->midiMessage(f.algorithm, 0xB0, 120, 0);
 	f.step();
-	check(stub.setCalls == 1, "MIDI panic syncs Arm");
-	check(stub.setAlgorithm == 0, "sync uses algorithm index");
-	check(stub.setParameter == (uint32_t)(3 + 7), "sync uses parameter offset");
-	check(stub.setValue == 0, "sync writes Off");
+	check(stub.setCalls == 0, "CC120 does not write Arm off");
+	check(f.values[3] == 1, "CC120 leaves Arm on");
 }
 
-/* Finding 2: realtime Stop/Reset also sync Arm. */
-void testRealtimePanicSyncsArm()
+/* Realtime Stop/Reset clear notes but leave Arm on. */
+void testRealtimeStopKeepsArm()
 {
 	Fixture f;
 	f.changed(0);
@@ -185,9 +181,8 @@ void testRealtimePanicSyncsArm()
 
 	factory()->midiRealtime(f.algorithm, 0xFC);
 	f.step();
-	check(stub.setCalls == 1, "Stop syncs Arm");
-	check(stub.setParameter == (uint32_t)(3 + 7), "Stop sync uses offset");
-	check(stub.setValue == 0, "Stop sync writes Off");
+	check(stub.setCalls == 0, "Stop does not write Arm off");
+	check(f.values[3] == 1, "Stop leaves Arm on");
 }
 
 /* Invalid table: arming is refused and the Arm parameter is pushed back. */
@@ -494,8 +489,8 @@ bool NT_readScl(_NT_sclRequest& request)
 int main()
 {
 	testVersionAndFactory();
-	testArmSyncUsesParameterOffset();
-	testRealtimePanicSyncsArm();
+	testMidiPanicKeepsArm();
+	testRealtimeStopKeepsArm();
 	testArmRefusedOnInvalidTable();
 	testConfigChangeSyncsArm();
 	testMidiForwarding();

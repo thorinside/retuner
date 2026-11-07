@@ -492,7 +492,8 @@ void testAllNotesOffAndPanic()
 	engine.processChannelMessage(0x90, 72, 100);
 	rec.clear();
 	engine.processChannelMessage(0xB0, 120, 0);
-	check(!engine.isArmed(), "panic disarms");
+	check(engine.isArmed(), "CC120 clears notes but stays armed");
+	check(engine.voicesInUse() == 0, "CC120 clears voices");
 	check(rec.messages.size() >= 3, "panic sends kill sequence");
 	bool sawOff = false, sawSustain = false, sawSoundOff = false, sawCentre = false;
 	for (const Message& m : rec.messages)
@@ -526,6 +527,7 @@ void testPanicAllChannels()
 	engine.processChannelMessage(0xB0, 120, 0);
 
 	check(rec.messages.size() == 32, "panic sends 8 offs, 8 CC64, 8 CC120, 8 bends");
+	check(engine.isArmed(), "CC120 keeps Arm on");
 	for (int i = 0; i < 8; ++i)
 	{
 		checkMessage(rec.messages[i * 3 + 0], (uint8_t)(0x80 | i), keys[i], 0x00, "panic off per channel");
@@ -535,7 +537,7 @@ void testPanicAllChannels()
 	}
 }
 
-/* AC4: realtime Stop/Reset panic; Start/Continue do not replay. */
+/* AC4: Stop is ignored; Reset clears notes; Start/Continue do not replay. */
 void testRealtime()
 {
 	Recorder rec;
@@ -545,15 +547,18 @@ void testRealtime()
 	engine.arm();
 
 	engine.processChannelMessage(0x90, 60, 100);
+	rec.clear();
 	engine.processRealtime(0xFC);
-	check(!engine.isArmed(), "stop disarms");
+	check(rec.empty(), "stop sends nothing");
+	check(engine.voicesInUse() == 1, "stop leaves held notes alone");
+	check(engine.isArmed(), "stop leaves armed");
 
-	engine.arm();
-	engine.processChannelMessage(0x90, 60, 100);
+	engine.processChannelMessage(0x90, 64, 100);
 	rec.clear();
 	engine.processRealtime(0xFF);
-	check(!engine.isArmed(), "reset disarms");
-	check(!rec.empty(), "reset panics");
+	check(engine.isArmed(), "reset clears notes but stays armed");
+	check(engine.voicesInUse() == 0, "reset clears voices");
+	check(!rec.empty(), "reset clears notes");
 
 	rec.clear();
 	engine.arm();

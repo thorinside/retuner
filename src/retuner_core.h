@@ -9,8 +9,8 @@
  *  - tuning is a repeating Scala scale anchored at MIDI 60 (C4);
  *  - every admitted key gets its pitch bend sent before its note-on;
  *  - a key holds one receiver voice until its final note-off arrives;
- *  - panic (CC120/121, realtime Stop/Reset, overflow, setup change) releases
- *    everything, centres the eight bends and disarms.
+ *  - CC120/121, System Reset and overflow release everything and centre the
+ *    bends; input panics keep Arm on, configuration changes disarm.
  */
 #ifndef RETUNER_CORE_H
 #define RETUNER_CORE_H
@@ -56,7 +56,6 @@ enum PanicReason
 	kPanicDisable,
 	kPanicAllSoundOff,
 	kPanicResetControllers,
-	kPanicStop,
 	kPanicReset,
 	kPanicOverflow,
 	kPanicConfig,
@@ -328,10 +327,10 @@ public:
 			switch (b1)
 			{
 			case 120: /* all sound off */
-				panic(kPanicAllSoundOff);
+				panic(kPanicAllSoundOff, false);
 				break;
 			case 121: /* reset all controllers: panic, never forwarded */
-				panic(kPanicResetControllers);
+				panic(kPanicResetControllers, false);
 				break;
 			case 123: /* all notes off */
 				allNotesOff();
@@ -347,11 +346,10 @@ public:
 
 	void processRealtime(uint8_t byte)
 	{
-		if (byte == 0xFC || byte == 0xFF) /* stop, system reset */
-		{
-			if (armed)
-				panic(byte == 0xFC ? kPanicStop : kPanicReset);
-		}
+		/* Stop (0xFC) is ignored: some sources emit it during ordinary
+		   navigation. System Reset (0xFF) still clears held notes. */
+		if (byte == 0xFF && armed)
+			panic(kPanicReset, false);
 	}
 
 	void noteOn(uint8_t key, uint8_t velocity)
@@ -421,8 +419,8 @@ public:
 		clearState();
 	}
 
-	/* Hard panic: release, silence the receiver, centre bends, disarm. */
-	void panic(PanicReason reason = kPanicNone)
+	/* Release, silence the receiver and centre bends; optionally disarm. */
+	void panic(PanicReason reason = kPanicNone, bool disarmOutput = true)
 	{
 		lastPanicReason = reason;
 		const int base = outputBase();
@@ -441,7 +439,8 @@ public:
 			send((uint8_t)(0xE0 | (base + i)), 0, 64);
 
 		clearState();
-		armed = false;
+		if (disarmOutput)
+			armed = false;
 	}
 
 private:

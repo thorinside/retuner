@@ -157,14 +157,18 @@ a voice, not a master, so the MPE configuration would not describe the receiver.
   follows `Output`: Monumatic/MPE send stored note-offs, CC64 = 0, CC120 = 0
   and centred bends; Per Ch Bend sends note-offs, CC120 = 0 and centred bends.
   The channels are 1–8 for Monumatic/Per Ch Bend and members 2–9 for MPE. State
-  clears and the plugin disarms. CC121 is never forwarded as a receiver reset.
-- **Realtime Stop (0xFC) / System Reset (0xFF):** hard panic. Start/Continue do
-  not replay notes or rearm.
-- **Overflow, scale change or other configuration change:** hard panic.
+  clears but `Arm` stays on, so a source reset does not silently disarm the
+  retuner. CC121 is never forwarded as a receiver reset.
+- **Realtime Stop (0xFC):** ignored, because some sources emit it during
+  ordinary navigation. Use CC120/CC121 or `Arm` Off for an intentional stop.
+- **System Reset (0xFF):** clear notes and bends but leave `Arm` on.
+  Start/Continue do not replay notes.
+- **Explicit Arm Off:** panic and disarm.
+- **Overflow, scale failure or configuration change:** hard panic and disarm.
 
-Panic is a proposed kill sequence whose exact receiver effect must be checked
-on hardware. The plugin cannot detect a DIN unplug; it does not use an
-inactivity timeout. Panic/rearm from the owner with the source stopped.
+Input panic is a kill sequence whose exact receiver effect must be checked on
+hardware. It keeps the retuner armed; use `Arm` Off for an explicit disable.
+The plugin cannot detect a DIN unplug; it does not use an inactivity timeout.
 
 ## Routing
 
