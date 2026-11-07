@@ -216,11 +216,23 @@ public:
 
 	bool configureScale(const Scale& newScale, double semitones)
 	{
-		if (configured && sameScale(newScale, scale) && semitones == bendRange)
+		if (configured && sameScale(newScale, scale) && semitones == bendRange && tableValid)
 			return false;
 		if (armed)
 			panic();
 		scale = newScale;
+		bendRange = semitones;
+		configured = true;
+		rebuild();
+		return true;
+	}
+
+	bool configureBendRange(double semitones)
+	{
+		if (configured && semitones == bendRange && tableValid)
+			return false;
+		if (armed)
+			panic();
 		bendRange = semitones;
 		configured = true;
 		rebuild();

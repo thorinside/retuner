@@ -40,6 +40,18 @@ struct Stub
 	const char* scaleName = "12-TET";
 	int readCalls = 0;
 	int updateCalls = 0;
+	bool deferCallback = false;
+	void (*pendingCallback)(void*) = nullptr;
+	void* pendingData = nullptr;
+
+	void completeRead()
+	{
+		void (*callback)(void*) = pendingCallback;
+		void* data = pendingData;
+		pendingCallback = nullptr;
+		if (callback)
+			callback(data);
+	}
 };
 
 Stub stub;
@@ -74,6 +86,9 @@ void resetScaleStub()
 	stub.scaleName = "12-TET";
 	stub.readCalls = 0;
 	stub.updateCalls = 0;
+	stub.deferCallback = false;
+	stub.pendingCallback = nullptr;
+	stub.pendingData = nullptr;
 }
 
 void check(bool ok, const char* what)
@@ -113,6 +128,7 @@ struct Fixture
 	}
 
 	void changed(int p) { factory()->parameterChanged(algorithm, p); }
+	void step() { factory()->step(algorithm, nullptr, 0); }
 	static void resetStub()
 	{
 		stub.setCalls = 0;
@@ -249,6 +265,65 @@ void testScaleLoadRetunes()
 	check(stub.messages[1].b0 == 0x90 && stub.messages[1].b1 == 0x40 && stub.messages[1].b2 == 0x64, "JI E4 on");
 }
 
+/* An asynchronous read completes on a later step, not in parameterChanged. */
+void testDeferredScaleLoad()
+{
+	Fixture f;
+	stub.notes = justNotes;
+	stub.deferCallback = true;
+	f.changed(1);
+	check(stub.pendingCallback != nullptr, "read is in flight");
+
+	/* Arming while the scale is still loading must be refused. */
+	f.changed(2);
+	f.resetStub();
+	f.values[3] = 1;
+	f.changed(3);
+	check(stub.setCalls == 1 && stub.setValue == 0, "arm refused while loading");
+
+	stub.completeRead();
+
+	/* Editing R after completion but before poll must use the new range. */
+	f.values[2] = 400;
+	f.changed(2);
+	f.step();
+	f.resetStub();
+	f.values[3] = 1;
+	f.changed(3);
+	check(stub.setCalls == 0, "arm accepted after load completes");
+
+	factory()->midiMessage(f.algorithm, 0x90, 64, 100);
+	check(stub.messages.size() == 2, "deferred JI sends bend then on");
+	check(stub.messages[0].b0 == 0xE0 && stub.messages[0].b1 == 0x68 && stub.messages[0].b2 == 0x3D, "deferred JI E4 bend at R=4");
+}
+
+/* Reloading the same file must rebuild after the table was invalidated. */
+void testIdenticalScaleReload()
+{
+	Fixture f;
+	f.changed(0);
+	f.changed(1);
+	f.changed(2);
+	f.values[3] = 1;
+	f.changed(3);
+
+	f.resetStub();
+	f.changed(1); /* same index: panic, invalidate, load, rebuild */
+	f.resetStub();
+	f.values[3] = 1;
+	f.changed(3);
+	check(stub.setCalls == 0, "identical reload keeps the table armable");
+}
+
+/* The SD file count cannot narrow the int16 parameter range below zero. */
+void testScaleCountClamp()
+{
+	Fixture f;
+	stub.numScl = 32769;
+	f.step();
+	check(f.algorithm->parameters[1].max == 32767, "SD count clamps to parameter maximum");
+}
+
 /* A failed .scl read must not fall back to a stale table when R changes. */
 void testScaleLoadFailureRefusesArm()
 {
@@ -357,8 +432,15 @@ bool NT_readScl(_NT_sclRequest& request)
 		request.nameBuffer[request.nameBufferSize - 1] = 0;
 	}
 
-	if (request.callback)
+	if (stub.deferCallback)
+	{
+		stub.pendingCallback = request.callback;
+		stub.pendingData = request.callbackData;
+	}
+	else if (request.callback)
+	{
 		request.callback(request.callbackData);
+	}
 	return true;
 }
 
@@ -373,6 +455,9 @@ int main()
 	testConfigChangeSyncsArm();
 	testMidiForwarding();
 	testScaleLoadRetunes();
+	testDeferredScaleLoad();
+	testIdenticalScaleReload();
+	testScaleCountClamp();
 	testScaleLoadFailureRefusesArm();
 
 	if (failures)

@@ -90,6 +90,16 @@ void syncArmIfDisarmed(_retunerAlgorithm* algorithm)
 		syncArmOff(algorithm);
 }
 
+void syncScale(_retunerAlgorithm* algorithm, int value)
+{
+	const int32_t index = NT_algorithmIndex(algorithm);
+	if (index < 0)
+		return;
+	algorithm->syncing = true;
+	NT_setParameterFromUi((uint32_t)index, kParamScale + NT_parameterOffset(), (int16_t)value);
+	algorithm->syncing = false;
+}
+
 /*
  * log2 for positive values without importing a firmware math symbol.
  * The atanh series converges quickly after normalising into [1, 2).
@@ -161,13 +171,13 @@ bool buildScale(const _NT_sclNote* notes, uint32_t numNotes, retuner::Scale& sca
 
 void applyLoadedScale(_retunerAlgorithm* algorithm)
 {
-	algorithm->dirty = false;
-
 	retuner::Scale scale;
 	if (algorithm->request.error ||
 	    !buildScale(algorithm->request.notes, algorithm->request.numNotes, scale))
 	{
 		algorithm->scaleError = true;
+		if (algorithm->engine.isArmed())
+			algorithm->engine.disarm();
 		algorithm->engine.invalidateTable();
 		return;
 	}
@@ -184,6 +194,8 @@ void startScaleRequest(_retunerAlgorithm* algorithm, int index)
 		index = 32767;
 
 	algorithm->request.index = (uint32_t)index;
+	algorithm->request.error = false;
+	algorithm->request.numNotes = 0;
 	algorithm->dirty = false;
 	algorithm->scaleError = false;
 	algorithm->engine.invalidateTable();
@@ -206,6 +218,7 @@ void pollScale(_retunerAlgorithm* algorithm)
 	{
 		if (algorithm->dirty)
 		{
+			algorithm->dirty = false;
 			applyLoadedScale(algorithm);
 			continue;
 		}
@@ -291,6 +304,8 @@ void parameterChanged(_NT_algorithm* self, int p)
 			index = 0;
 		if (index > 32767)
 			index = 32767;
+		if (index != algorithm->v[kParamScale])
+			syncScale(algorithm, index);
 		algorithm->pendingScale = index;
 		algorithm->engine.invalidateTable();
 		if (!algorithm->awaitingCallback)
@@ -300,11 +315,9 @@ void parameterChanged(_NT_algorithm* self, int p)
 	}
 		break;
 	case kParamBendRange:
-		if (algorithm->awaitingCallback || algorithm->scaleError)
+		algorithm->engine.configureBendRange(algorithm->v[kParamBendRange] / 100.0);
+		if (algorithm->awaitingCallback || algorithm->dirty || algorithm->scaleError)
 			algorithm->engine.invalidateTable();
-		else
-			algorithm->engine.configureScale(algorithm->engine.currentScale(),
-			                                 algorithm->v[kParamBendRange] / 100.0);
 		syncArmIfDisarmed(algorithm);
 		break;
 	}
@@ -335,16 +348,13 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4)
 	if (mounted != algorithm->cardMounted)
 	{
 		algorithm->cardMounted = mounted;
-		if (algorithm->engine.isArmed())
-		{
-			algorithm->engine.disarm();
-			syncArmIfDisarmed(algorithm);
-		}
-
 		if (mounted)
 		{
 			const uint32_t count = NT_getNumScl();
-			const int16_t maximum = count > 0 ? (int16_t)(count - 1) : 0;
+			uint32_t maximum32 = count > 0 ? count - 1 : 0;
+			if (maximum32 > 32767)
+				maximum32 = 32767;
+			const int16_t maximum = (int16_t)maximum32;
 			if (algorithm->params[kParamScale].max != maximum)
 			{
 				algorithm->params[kParamScale].max = maximum;
@@ -359,19 +369,20 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4)
 				if (index < 0)
 					index = 0;
 				if (index > maximum)
+				{
 					index = maximum;
+					syncScale(algorithm, index);
+				}
 				algorithm->pendingScale = index;
-				if (!algorithm->awaitingCallback)
+				if (!algorithm->engine.isArmed() &&
+				    !algorithm->awaitingCallback && !algorithm->dirty)
 					startScaleRequest(algorithm, index);
 			}
-		}
-		else
-		{
-			algorithm->awaitingCallback = false;
 		}
 	}
 
 	pollScale(algorithm);
+	syncArmIfDisarmed(algorithm);
 }
 
 bool draw(_NT_algorithm* self)
@@ -403,13 +414,14 @@ bool draw(_NT_algorithm* self)
 
 int parameterString(_NT_algorithm* self, int p, int v, char* buff)
 {
-	(void)self;
 	if (p != kParamScale)
 		return 0;
 
+	const _retunerAlgorithm* algorithm = static_cast<const _retunerAlgorithm*>(self);
 	_NT_sclInfo info;
 	NT_getSclInfo((uint32_t)(v < 0 ? 0 : v), info);
-	const char* name = (info.name && info.name[0]) ? info.name : "12-TET";
+	const char* name = (info.name && info.name[0]) ? info.name :
+	                   (algorithm->scaleName[0] ? algorithm->scaleName : "12-TET");
 
 	int length = 0;
 	while (length < kNT_parameterStringSize - 1 && name[length])
