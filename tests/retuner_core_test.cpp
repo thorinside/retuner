@@ -119,6 +119,12 @@ void testArmAndTable()
 	check(engine.configureTuning(retuner::kTuningJustC, 0.01), "configure JI tight");
 	check(!engine.isTableValid(), "JI table invalid at R=0.01");
 	check(engine.tableError() == retuner::kTableBendTooSmall, "tight error");
+
+	/* Non-finite R must be rejected, not silently treated as a huge range. */
+	check(engine.configureTuning(retuner::kTuningJustC, HUGE_VAL), "configure infinite R");
+	check(!engine.isTableValid(), "infinite table invalid");
+	check(engine.tableError() == retuner::kTableBendInvalid, "infinite error");
+	check(!engine.arm(), "cannot arm infinite range");
 }
 
 /* AC2: independent voices and bend-before-on. */
@@ -198,6 +204,22 @@ void testRepeatsAndOffs()
 	rec.clear();
 	engine.processChannelMessage(0x90, 60, 0);
 	check(rec.empty(), "stray velocity-zero on ignored");
+}
+
+/* A held key released by velocity-zero note-on must emit its stored off. */
+void testVelocityZeroRelease()
+{
+	Recorder rec;
+	retuner::Engine engine;
+	engine.setOutput(rec.out());
+	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.arm();
+
+	engine.processChannelMessage(0x90, 60, 100);
+	rec.clear();
+	engine.processChannelMessage(0x90, 60, 0);
+	check(rec.only(0x80, 0x3C, 0x00), "velocity-zero on releases held key");
+	check(engine.voicesInUse() == 0, "velocity-zero frees the voice");
 }
 
 /* AC3: unmapped keys are tracked silently and cannot kill another key. */
@@ -338,6 +360,32 @@ void testAllNotesOffAndPanic()
 	check(sawOff && sawSustain && sawSoundOff && sawCentre, "panic sequence");
 }
 
+/* AC4: panic covers all eight channels, not only the first. */
+void testPanicAllChannels()
+{
+	Recorder rec;
+	retuner::Engine engine;
+	engine.setOutput(rec.out());
+	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.arm();
+
+	const uint8_t keys[8] = { 60, 62, 64, 65, 67, 69, 71, 72 };
+	for (int i = 0; i < 8; ++i)
+		engine.processChannelMessage(0x90, keys[i], 100);
+
+	rec.clear();
+	engine.processChannelMessage(0xB0, 120, 0);
+
+	check(rec.messages.size() == 32, "panic sends 8 offs, 8 CC64, 8 CC120, 8 bends");
+	for (int i = 0; i < 8; ++i)
+	{
+		checkMessage(rec.messages[i * 3 + 0], (uint8_t)(0x80 | i), keys[i], 0x00, "panic off per channel");
+		checkMessage(rec.messages[i * 3 + 1], (uint8_t)(0xB0 | i), 64, 0, "panic sustain per channel");
+		checkMessage(rec.messages[i * 3 + 2], (uint8_t)(0xB0 | i), 120, 0, "panic sound off per channel");
+		checkMessage(rec.messages[24 + i], (uint8_t)(0xE0 | i), 0, 0x40, "panic centre per channel");
+	}
+}
+
 /* AC4: realtime Stop/Reset panic; Start/Continue do not replay. */
 void testRealtime()
 {
@@ -351,12 +399,39 @@ void testRealtime()
 	engine.processRealtime(0xFC);
 	check(!engine.isArmed(), "stop disarms");
 
+	engine.arm();
+	engine.processChannelMessage(0x90, 60, 100);
+	rec.clear();
+	engine.processRealtime(0xFF);
+	check(!engine.isArmed(), "reset disarms");
+	check(!rec.empty(), "reset panics");
+
 	rec.clear();
 	engine.arm();
 	engine.processRealtime(0xFA);
 	engine.processRealtime(0xFB);
 	check(rec.empty(), "start/continue do not replay");
 	check(engine.isArmed(), "start/continue leave armed");
+}
+
+/* AC3: a dropped key held across a freed slot is not admitted mid-gesture. */
+void testDroppedKeyMidGesture()
+{
+	Recorder rec;
+	retuner::Engine engine;
+	engine.setOutput(rec.out());
+	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.arm();
+
+	const uint8_t keys[9] = { 60, 62, 64, 65, 67, 69, 71, 72, 74 };
+	for (int i = 0; i < 8; ++i)
+		engine.processChannelMessage(0x90, keys[i], 100);
+	engine.processChannelMessage(0x90, keys[8], 100); /* dropped */
+
+	engine.processChannelMessage(0x80, keys[0], 0); /* free a voice */
+	rec.clear();
+	engine.processChannelMessage(0x90, keys[8], 100); /* still held */
+	check(rec.empty(), "dropped key not admitted mid-gesture");
 }
 
 /* AC4/AC5: reconfiguration panics and disarms. */
@@ -403,7 +478,10 @@ int main()
 	testCountOverflow();
 	testExcludedControllers();
 	testAllNotesOffAndPanic();
+	testPanicAllChannels();
+	testVelocityZeroRelease();
 	testRealtime();
+	testDroppedKeyMidGesture();
 	testReconfiguration();
 
 	if (failures)

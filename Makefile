@@ -1,6 +1,6 @@
 PLUGIN_NAME = retuner
 SOURCES = src/retuner.cpp
-TEST_SOURCES = tests/retuner_core_test.cpp
+TEST_SOURCES = tests/retuner_core_test.cpp tests/retuner_adapter_test.cpp
 
 UNAME_S := $(shell uname -s)
 TARGET ?= hardware
@@ -43,9 +43,10 @@ else ifeq ($(TARGET),test)
         CXX = g++
     endif
     CFLAGS = -std=c++11 -O2 -g -Wall -Wextra -Werror -fno-rtti -fno-exceptions
-    INCLUDES = -I. -I./src
+    INCLUDES = -I. -I./src -I./distingNT_API/include
     BUILD_DIR = build
-    TEST_OUTPUT = $(BUILD_DIR)/retuner_core_test
+    TEST_CORE = $(BUILD_DIR)/retuner_core_test
+    TEST_ADAPTER = $(BUILD_DIR)/retuner_adapter_test
 endif
 
 all: $(OUTPUT)
@@ -57,16 +58,21 @@ $(OUTPUT): $(OBJECTS)
 	@echo "Built: $@"
 	@$(SIZE_CMD)
 
-$(BUILD_DIR)/%.o: %.cpp | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: %.cpp src/retuner_core.h | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 $(BUILD_DIR):
 	@mkdir -p $(BUILD_DIR)
 else ifeq ($(TARGET),test)
-$(TEST_OUTPUT): $(TEST_SOURCES) src/retuner_core.h
+$(TEST_CORE): tests/retuner_core_test.cpp src/retuner_core.h
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(CFLAGS) $(INCLUDES) -o $@ $(TEST_SOURCES)
+	$(CXX) $(CFLAGS) $(INCLUDES) -o $@ tests/retuner_core_test.cpp
+	@echo "Built: $@"
+
+$(TEST_ADAPTER): tests/retuner_adapter_test.cpp src/retuner.cpp src/retuner_core.h
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) $(CFLAGS) $(INCLUDES) -o $@ tests/retuner_adapter_test.cpp src/retuner.cpp
 	@echo "Built: $@"
 endif
 
@@ -74,8 +80,9 @@ hardware:
 	@$(MAKE) TARGET=hardware
 
 test:
-	@$(MAKE) TARGET=test build/retuner_core_test
+	@$(MAKE) TARGET=test build/retuner_core_test build/retuner_adapter_test
 	@./build/retuner_core_test
+	@./build/retuner_adapter_test
 
 verify: test
 	@$(MAKE) TARGET=hardware

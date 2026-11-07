@@ -64,7 +64,7 @@ void syncArmOff(_retunerAlgorithm* algorithm)
 	if (index < 0)
 		return;
 	algorithm->syncing = true;
-	NT_setParameterFromUi((uint32_t)index, kParamArm, 0);
+	NT_setParameterFromUi((uint32_t)index, kParamArm + NT_parameterOffset(), 0);
 	algorithm->syncing = false;
 }
 
@@ -131,12 +131,16 @@ void parameterChanged(_NT_algorithm* self, int p)
 
 void midiMessage(_NT_algorithm* self, uint8_t byte0, uint8_t byte1, uint8_t byte2)
 {
-	static_cast<_retunerAlgorithm*>(self)->engine.processChannelMessage(byte0, byte1, byte2);
+	_retunerAlgorithm* algorithm = static_cast<_retunerAlgorithm*>(self);
+	algorithm->engine.processChannelMessage(byte0, byte1, byte2);
+	syncArmIfDisarmed(algorithm);
 }
 
 void midiRealtime(_NT_algorithm* self, uint8_t byte)
 {
-	static_cast<_retunerAlgorithm*>(self)->engine.processRealtime(byte);
+	_retunerAlgorithm* algorithm = static_cast<_retunerAlgorithm*>(self);
+	algorithm->engine.processRealtime(byte);
+	syncArmIfDisarmed(algorithm);
 }
 
 /* No audio path: the plugin only emits MIDI. */
@@ -187,7 +191,9 @@ static const _NT_factory factory = {
 
 } // namespace
 
+#if defined(__arm__)
 _NT_DRAM_SECTION
+#endif
 uintptr_t pluginEntry(_NT_selector selector, uint32_t data)
 {
 	switch (selector)

@@ -21,7 +21,7 @@ make hardware
 make inspect TARGET=hardware
 ```
 
-Native core tests:
+Native core and adapter tests:
 
 ```bash
 make test
@@ -36,7 +36,8 @@ The release object is `plugins/retuner.o`; copy it to the module's
 
 - `src/retuner_core.h` — host-independent note/tuning/voice engine.
 - `src/retuner.cpp` — disting NT adapter (`ThRt`, "Retuner").
-- `tests/retuner_core_test.cpp` — native behavioural tests.
+- `tests/retuner_core_test.cpp` — native core behavioural tests.
+- `tests/retuner_adapter_test.cpp` — adapter tests against disting NT API stubs.
 - `docs/retuner.md` — player-facing contract and open hardware prerequisites.
 
 ## Status

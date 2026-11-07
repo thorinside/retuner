@@ -50,6 +50,7 @@ enum TableError
 {
 	kTableOk = 0,
 	kTableBendUnset,
+	kTableBendInvalid,
 	kTableBendTooSmall,
 };
 
@@ -87,7 +88,8 @@ struct Voice
  */
 inline bool makeTarget(double pitch, double bendRange, Target& out)
 {
-	if (!(bendRange > 0.0))
+	/* Reject unset, non-finite and non-positive ranges. */
+	if (!(bendRange > 0.0) || !isfinite(bendRange))
 		return false;
 
 	double base = floor(pitch + 0.5);
@@ -397,6 +399,11 @@ private:
 		if (!(bendRange > 0.0))
 		{
 			error = kTableBendUnset;
+			return;
+		}
+		if (!isfinite(bendRange))
+		{
+			error = kTableBendInvalid;
 			return;
 		}
 
