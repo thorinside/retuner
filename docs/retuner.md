@@ -114,6 +114,20 @@ Eight voices on MIDI channels 1–8, one voice per channel. Channel 1 is a voice
 not an MPE master. Panic sends note-offs, CC64 = 0, CC120 = 0 and centred bends
 on channels 1–8. This is the Monumatic Omni/Mono profile.
 
+### Monumatic receiver setup
+
+On the Monumatic itself:
+
+1. Hold **Shift** and turn **Resonance** fully down until the MIDI channel reads
+   **All / Omni / MPE**. Do not leave it on a single MIDI channel.
+2. Press **Mono/Poly** until the LED is red (Mono mode). Monumatic then assigns
+   one voice per MIDI channel 1–8.
+3. Use the supplied **TRS-A** MIDI cable/adapter.
+4. Match its pitch-bend range to the Retuner’s `Bend Range`.
+
+Without Omni plus Mono, per-channel notes and bends will not address eight
+independent voices.
+
 ### Per Ch Bend
 
 The same eight-channel voice map, channels 1–8, for a generic multi-timbral
