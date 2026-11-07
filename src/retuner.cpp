@@ -472,12 +472,6 @@ bool draw(_NT_algorithm* self)
 	{
 		switch (engine.lastPanic())
 		{
-		case retuner::kPanicAllSoundOff:
-			status = "Panic: CC120";
-			break;
-		case retuner::kPanicResetControllers:
-			status = "Panic: CC121";
-			break;
 		case retuner::kPanicReset:
 			status = "Panic: Reset";
 			break;

@@ -159,8 +159,8 @@ void testVersionAndFactory()
 	check(f->guid == retuner::kGuid, "ThRt guid");
 }
 
-/* Input panic clears notes and bends but leaves Arm on. */
-void testMidiPanicKeepsArm()
+/* Source CC120/CC121 are ignored; explicit Arm Off is the panic. */
+void testCC120Ignored()
 {
 	Fixture f;
 	f.changed(0);
@@ -176,6 +176,7 @@ void testMidiPanicKeepsArm()
 	f.step();
 	check(stub.setCalls == 0, "CC120 does not write Arm off");
 	check(f.values[3] == 1, "CC120 leaves Arm on");
+	check(stub.messages.empty(), "CC120 emits nothing");
 }
 
 /* Realtime Stop/Reset clear notes but leave Arm on. */
@@ -624,7 +625,7 @@ bool NT_readScl(_NT_sclRequest& request)
 int main()
 {
 	testVersionAndFactory();
-	testMidiPanicKeepsArm();
+	testCC120Ignored();
 	testRealtimeStopKeepsArm();
 	testArmRefusedOnInvalidTable();
 	testConfigChangeSyncsArm();

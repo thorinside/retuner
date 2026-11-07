@@ -54,8 +54,6 @@ enum PanicReason
 {
 	kPanicNone = 0,
 	kPanicDisable,
-	kPanicAllSoundOff,
-	kPanicResetControllers,
 	kPanicReset,
 	kPanicOverflow,
 	kPanicConfig,
@@ -193,7 +191,7 @@ public:
 		: output(), selectedChannel(0), outputMode(kOutputMonumatic),
 		  scale(equalTemperamentScale()), bendRange(0.0), configured(false),
 		  tableValid(false), armed(false), fault(kFaultNone),
-		  lastPanicReason(kPanicNone), error(kTableBendUnset)
+		  lastPanicReason(kPanicNone), inPanic(false), error(kTableBendUnset)
 	{
 		clearState();
 		rebuild();
@@ -326,11 +324,8 @@ public:
 		case 0xB0:
 			switch (b1)
 			{
-			case 120: /* all sound off */
-				panic(kPanicAllSoundOff, false);
-				break;
-			case 121: /* reset all controllers: panic, never forwarded */
-				panic(kPanicResetControllers, false);
+			case 120: /* all sound off: ignored, can be a routed-back panic */
+			case 121: /* reset all controllers: ignored */
 				break;
 			case 123: /* all notes off: ignored, note-offs own the lifecycle */
 				break;
@@ -408,6 +403,9 @@ public:
 	/* Release, silence the receiver and centre bends; optionally disarm. */
 	void panic(PanicReason reason = kPanicNone, bool disarmOutput = true)
 	{
+		if (inPanic)
+			return;
+		inPanic = true;
 		lastPanicReason = reason;
 		const int base = outputBase();
 		for (int i = 0; i < kChannels; ++i)
@@ -441,6 +439,7 @@ public:
 		clearState();
 		if (disarmOutput)
 			armed = false;
+		inPanic = false;
 	}
 
 private:
@@ -595,6 +594,7 @@ private:
 	bool armed;
 	Fault fault;
 	PanicReason lastPanicReason;
+	bool inPanic;
 	TableError error;
 };
 

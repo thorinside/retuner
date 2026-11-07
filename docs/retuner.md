@@ -160,25 +160,21 @@ a voice, not a master, so the MPE configuration would not describe the receiver.
   forwarded.
 - **CC123** on the selected channel: ignored. Note-offs own the note lifecycle;
   use `Arm` Off for an intentional all-notes-off.
-- **CC120/CC121** on the selected channel: hard panic. Monumatic sends stored
-  note-offs, CC64 = 0, CC120 = 0 and centred bends on channels 1–8; Per Ch Bend
-  sends note-offs, CC120 = 0 and centred bends; MPE sends stored member
-  note-offs, CC64 = 0 and CC120 = 0 on master channel 1, then centred member
-  bends. State clears but `Arm` stays on, so a source reset does not silently
-  disarm the retuner. CC121 is never forwarded as a receiver reset.
+- **CC120/CC121** on the selected channel: ignored. A source all-sound-off or
+  reset must not retire the plugin's own note bookkeeping; use `Arm` Off for an
+  explicit panic.
 - **Realtime Stop (0xFC):** ignored, because some sources emit it during
-  ordinary navigation. Use CC120/CC121 or `Arm` Off for an intentional stop.
+  ordinary navigation. Use `Arm` Off for an intentional stop.
 - **System Reset (0xFF):** clear notes and bends but leave `Arm` on.
   Start/Continue do not replay notes.
 - **Explicit Arm Off:** panic and disarm.
 - **Overflow, scale failure or configuration change:** hard panic and disarm.
 
-Input panic is a kill sequence whose exact receiver effect must be checked on
-hardware. It keeps the retuner armed; use `Arm` Off for an explicit disable.
-Because Arm stays on, an outstanding pre-panic note-off for the same key can
-release a new note using that key; rearm from a quiescent source when that
-matters. The plugin cannot detect a DIN unplug; it does not use an inactivity
-timeout.
+Panic is an explicit kill sequence whose exact receiver effect must be checked
+on hardware. Source CC120/CC121 and Stop are ignored so ordinary transport or
+all-sound-off traffic cannot cut held notes; use `Arm` Off or a configuration
+change for an intentional panic. The plugin cannot detect a DIN unplug; it does
+not use an inactivity timeout.
 
 ## Routing
 

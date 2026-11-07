@@ -373,7 +373,7 @@ void testOutputModes()
 	checkMessage(rec.messages[3], 0x92, 0x40, 0x64, "MPE second note on channel 3");
 
 	rec.clear();
-	mpe.processChannelMessage(0xB0, 120, 0);
+	mpe.disarm();
 	bool sawMasterSustain = false, sawMasterSoundOff = false, sawMemberControl = false;
 	for (const Message& m : rec.messages)
 	{
@@ -470,7 +470,7 @@ void testExcludedControllers()
 	check(rec.empty(), "excluded controllers silent");
 }
 
-/* CC123 is ignored; CC120 clears notes and bends but keeps Arm on. */
+/* CC123 and CC120 are ignored; explicit disarm sends the kill sequence. */
 void testAllNotesOffAndPanic()
 {
 	Recorder rec;
@@ -497,12 +497,12 @@ void testAllNotesOffAndPanic()
 	engine.processChannelMessage(0x80, 67, 0);
 	check(rec.only(0x80, 0x43, 0x00), "ordinary release has no bend reset");
 
-	/* Panic: offs, sustain off, all-sound-off, then centred bends. */
+	/* Explicit disarm: offs, sustain off, all-sound-off, then bends. */
 	engine.processChannelMessage(0x90, 72, 100);
 	rec.clear();
-	engine.processChannelMessage(0xB0, 120, 0);
-	check(engine.isArmed(), "CC120 keeps Arm on");
-	check(engine.voicesInUse() == 0, "CC120 clears voices");
+	engine.disarm();
+	check(!engine.isArmed(), "explicit disarm disarms");
+	check(engine.voicesInUse() == 0, "panic clears voices");
 	check(rec.messages.size() >= 3, "panic sends kill sequence");
 	bool sawOff = false, sawSustain = false, sawSoundOff = false, sawCentre = false;
 	for (const Message& m : rec.messages)
@@ -533,10 +533,10 @@ void testPanicAllChannels()
 		engine.processChannelMessage(0x90, keys[i], 100);
 
 	rec.clear();
-	engine.processChannelMessage(0xB0, 120, 0);
+	engine.disarm();
 
 	check(rec.messages.size() == 32, "panic sends 8 offs, 8 CC64, 8 CC120, 8 bends");
-	check(engine.isArmed(), "CC120 keeps Arm on");
+	check(!engine.isArmed(), "explicit panic disarms");
 	for (int i = 0; i < 8; ++i)
 	{
 		checkMessage(rec.messages[i * 3 + 0], (uint8_t)(0x80 | i), keys[i], 0x00, "panic off per channel");
