@@ -173,8 +173,12 @@ bool draw(_NT_algorithm* self)
 	return false;
 }
 
+
+
+} // namespace
+
 static const _NT_factory factory = {
-	.guid = retuner::kGuid,
+	.guid = NT_MULTICHAR( 'T', 'h', 'R', 't' ),
 	.name = "Retuner",
 	.description = "Static MIDI retuner: one input channel to eight retuned voices",
 	.numSpecifications = 0,
@@ -188,8 +192,6 @@ static const _NT_factory factory = {
 	.midiMessage = midiMessage,
 	.tags = kNT_tagUtility,
 };
-
-} // namespace
 
 #if defined(__arm__)
 _NT_DRAM_SECTION

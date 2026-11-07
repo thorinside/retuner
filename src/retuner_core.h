@@ -130,19 +130,21 @@ inline bool pitchFor(int tuning, int key, double& pitch)
 			degree += 12;
 			--octave;
 		}
-		double ratio = 0.0;
+		/* 12*log2(ratio) for 1, 9/8, 5/4, 4/3, 3/2, 5/3, 15/8.
+		   Hard-coded so the plugin does not import log2 from the firmware. */
+		double offset = 0.0;
 		switch (degree)
 		{
-		case 0: ratio = 1.0; break;
-		case 2: ratio = 9.0 / 8.0; break;
-		case 4: ratio = 5.0 / 4.0; break;
-		case 5: ratio = 4.0 / 3.0; break;
-		case 7: ratio = 3.0 / 2.0; break;
-		case 9: ratio = 5.0 / 3.0; break;
-		case 11: ratio = 15.0 / 8.0; break;
+		case 0: offset = 0.0; break;
+		case 2: offset = 2.039100017307744; break;
+		case 4: offset = 3.863137138648344; break;
+		case 5: offset = 4.980449991346128; break;
+		case 7: offset = 7.019550008653872; break;
+		case 9: offset = 8.843587129994472; break;
+		case 11: offset = 10.882687147302228; break;
 		default: return false;
 		}
-		pitch = 60.0 + 12.0 * octave + 12.0 * log2(ratio);
+		pitch = 60.0 + 12.0 * octave + offset;
 		return true;
 	}
 	pitch = (double)key;
