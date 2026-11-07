@@ -163,8 +163,9 @@ void testArmSyncUsesParameterOffset()
 	f.changed(3);
 	check(stub.setCalls == 0, "valid arm sends no sync write");
 
-	/* MIDI panic disarms and must push Arm back to Off. */
+	/* MIDI panic disarms and must push Arm back to Off on the next step. */
 	factory()->midiMessage(f.algorithm, 0xB0, 120, 0);
+	f.step();
 	check(stub.setCalls == 1, "MIDI panic syncs Arm");
 	check(stub.setAlgorithm == 0, "sync uses algorithm index");
 	check(stub.setParameter == (uint32_t)(3 + 7), "sync uses parameter offset");
@@ -183,6 +184,7 @@ void testRealtimePanicSyncsArm()
 	f.resetStub();
 
 	factory()->midiRealtime(f.algorithm, 0xFC);
+	f.step();
 	check(stub.setCalls == 1, "Stop syncs Arm");
 	check(stub.setParameter == (uint32_t)(3 + 7), "Stop sync uses offset");
 	check(stub.setValue == 0, "Stop sync writes Off");
@@ -200,6 +202,7 @@ void testArmRefusedOnInvalidTable()
 
 	f.values[3] = 1;
 	f.changed(3);
+	f.step();
 	check(stub.setCalls == 1, "invalid arm syncs Arm");
 	check(stub.setParameter == (uint32_t)(3 + 7), "invalid arm sync uses offset");
 	check(stub.setValue == 0, "invalid arm sync writes Off");
@@ -218,6 +221,7 @@ void testConfigChangeSyncsArm()
 
 	f.values[0] = 2;
 	f.changed(0);
+	f.step();
 	check(stub.setCalls == 1, "channel change syncs Arm");
 	check(stub.setParameter == (uint32_t)(3 + 7), "channel sync uses offset");
 	check(stub.setValue == 0, "channel sync writes Off");
@@ -280,6 +284,7 @@ void testOutputModeForwarding()
 	f.resetStub();
 	f.values[4] = 0;
 	f.changed(4);
+	f.step();
 	check(stub.setCalls == 1 && stub.setValue == 0, "output change syncs Arm off");
 }
 
@@ -317,6 +322,7 @@ void testDeferredScaleLoad()
 	f.resetStub();
 	f.values[3] = 1;
 	f.changed(3);
+	f.step();
 	check(stub.setCalls == 1 && stub.setValue == 0, "arm refused while loading");
 
 	stub.completeRead();
@@ -374,6 +380,7 @@ void testScaleLoadFailureRefusesArm()
 
 	f.values[3] = 1;
 	f.changed(3);
+	f.step();
 	check(stub.setCalls == 1, "failed scale arms refused");
 	check(stub.setValue == 0, "failed scale writes Arm off");
 }

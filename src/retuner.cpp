@@ -56,7 +56,7 @@ struct _retunerAlgorithm : public _NT_algorithm
 	_retunerAlgorithm()
 		: engine(), params(), syncing(false), request(), notes(), scaleName(),
 		  pendingScale(0), cardMounted(false), awaitingCallback(false),
-		  dirty(false), scaleError(false) {}
+		  dirty(false), scaleError(false), armOffPending(false) {}
 
 	retuner::Engine engine;
 	_NT_parameter params[kNumParams];
@@ -70,6 +70,7 @@ struct _retunerAlgorithm : public _NT_algorithm
 	bool awaitingCallback;
 	bool dirty;
 	bool scaleError;
+	bool armOffPending;
 };
 
 /* Send one 3-byte channel message to the MIDI breakout only. */
@@ -78,8 +79,8 @@ void sendMidi(void*, uint8_t b0, uint8_t b1, uint8_t b2)
 	NT_sendMidi3ByteMessage(kNT_destinationBreakout, b0, b1, b2);
 }
 
-/* Re-sync the Arm parameter without recursing through parameterChanged. */
-void syncArmOff(_retunerAlgorithm* algorithm)
+/* Write the Arm parameter back to Off from step(), not re-entrantly. */
+void writeArmOff(_retunerAlgorithm* algorithm)
 {
 	const int32_t index = NT_algorithmIndex(algorithm);
 	if (index < 0)
@@ -92,7 +93,7 @@ void syncArmOff(_retunerAlgorithm* algorithm)
 void syncArmIfDisarmed(_retunerAlgorithm* algorithm)
 {
 	if (!algorithm->engine.isArmed() && algorithm->v[kParamArm])
-		syncArmOff(algorithm);
+		algorithm->armOffPending = true;
 }
 
 void syncScale(_retunerAlgorithm* algorithm, int value)
@@ -182,7 +183,7 @@ void applyLoadedScale(_retunerAlgorithm* algorithm)
 	{
 		algorithm->scaleError = true;
 		if (algorithm->engine.isArmed())
-			algorithm->engine.disarm();
+			algorithm->engine.panic(retuner::kPanicScaleFailure);
 		algorithm->engine.invalidateTable();
 		return;
 	}
@@ -289,12 +290,15 @@ void parameterChanged(_NT_algorithm* self, int p)
 	case kParamArm:
 		if (algorithm->v[kParamArm])
 		{
-			if (!algorithm->engine.arm())
-				syncArmOff(algorithm);
+			if (algorithm->engine.arm())
+				algorithm->armOffPending = false;
+			else
+				algorithm->armOffPending = true;
 		}
 		else
 		{
 			algorithm->engine.disarm();
+			algorithm->armOffPending = false;
 		}
 		break;
 	case kParamChannel:
@@ -392,6 +396,11 @@ void step(_NT_algorithm* self, float* busFrames, int numFramesBy4)
 
 	pollScale(algorithm);
 	syncArmIfDisarmed(algorithm);
+	if (algorithm->armOffPending)
+	{
+		algorithm->armOffPending = false;
+		writeArmOff(algorithm);
+	}
 }
 
 bool draw(_NT_algorithm* self)
@@ -418,6 +427,38 @@ bool draw(_NT_algorithm* self)
 		status = "Scale load failed";
 	else if (engine.faultState() != retuner::kFaultNone)
 		status = "Fault: overflow";
+	else if (engine.lastPanic() != retuner::kPanicNone)
+	{
+		switch (engine.lastPanic())
+		{
+		case retuner::kPanicAllSoundOff:
+			status = "Panic: CC120";
+			break;
+		case retuner::kPanicResetControllers:
+			status = "Panic: CC121";
+			break;
+		case retuner::kPanicStop:
+			status = "Panic: Stop";
+			break;
+		case retuner::kPanicReset:
+			status = "Panic: Reset";
+			break;
+		case retuner::kPanicOverflow:
+			status = "Panic: overflow";
+			break;
+		case retuner::kPanicConfig:
+			status = "Panic: config";
+			break;
+		case retuner::kPanicScaleFailure:
+			status = "Panic: scale";
+			break;
+		case retuner::kPanicDisable:
+			status = "Panic: disable";
+			break;
+		default:
+			break;
+		}
+	}
 	else if (!engine.isTableValid())
 	{
 		switch (engine.tableError())

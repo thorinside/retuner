@@ -50,6 +50,19 @@ enum Fault
 	kFaultNoteOverflow,
 };
 
+enum PanicReason
+{
+	kPanicNone = 0,
+	kPanicDisable,
+	kPanicAllSoundOff,
+	kPanicResetControllers,
+	kPanicStop,
+	kPanicReset,
+	kPanicOverflow,
+	kPanicConfig,
+	kPanicScaleFailure,
+};
+
 enum TableError
 {
 	kTableOk = 0,
@@ -181,7 +194,7 @@ public:
 		: output(), selectedChannel(0), outputMode(kOutputMonumatic),
 		  scale(equalTemperamentScale()), bendRange(0.0), configured(false),
 		  tableValid(false), armed(false), fault(kFaultNone),
-		  error(kTableBendUnset)
+		  lastPanicReason(kPanicNone), error(kTableBendUnset)
 	{
 		clearState();
 		rebuild();
@@ -196,6 +209,7 @@ public:
 	bool isArmed() const { return armed; }
 	bool isTableValid() const { return tableValid; }
 	Fault faultState() const { return fault; }
+	PanicReason lastPanic() const { return lastPanicReason; }
 	TableError tableError() const { return error; }
 	const Target& target(int key) const { return table[key]; }
 
@@ -218,7 +232,7 @@ public:
 		if (channelIndex == selectedChannel)
 			return false;
 		if (armed)
-			panic();
+			panic(kPanicConfig);
 		selectedChannel = channelIndex;
 		return true;
 	}
@@ -232,7 +246,7 @@ public:
 		if (newMode == outputMode)
 			return false;
 		if (armed)
-			panic();
+			panic(kPanicConfig);
 		outputMode = newMode;
 		return true;
 	}
@@ -242,7 +256,7 @@ public:
 		if (configured && sameScale(newScale, scale) && semitones == bendRange && tableValid)
 			return false;
 		if (armed)
-			panic();
+			panic(kPanicConfig);
 		scale = newScale;
 		bendRange = semitones;
 		configured = true;
@@ -255,7 +269,7 @@ public:
 		if (configured && semitones == bendRange && tableValid)
 			return false;
 		if (armed)
-			panic();
+			panic(kPanicConfig);
 		bendRange = semitones;
 		configured = true;
 		rebuild();
@@ -280,6 +294,7 @@ public:
 		clearState();
 		armed = true;
 		fault = kFaultNone;
+		lastPanicReason = kPanicNone;
 		if (outputMode == kOutputMpe)
 			sendMpeSetup();
 		return true;
@@ -289,7 +304,7 @@ public:
 	void disarm()
 	{
 		if (armed)
-			panic();
+			panic(kPanicDisable);
 	}
 
 	void processChannelMessage(uint8_t b0, uint8_t b1, uint8_t b2)
@@ -313,8 +328,10 @@ public:
 			switch (b1)
 			{
 			case 120: /* all sound off */
+				panic(kPanicAllSoundOff);
+				break;
 			case 121: /* reset all controllers: panic, never forwarded */
-				panic();
+				panic(kPanicResetControllers);
 				break;
 			case 123: /* all notes off */
 				allNotesOff();
@@ -333,7 +350,7 @@ public:
 		if (byte == 0xFC || byte == 0xFF) /* stop, system reset */
 		{
 			if (armed)
-				panic();
+				panic(byte == 0xFC ? kPanicStop : kPanicReset);
 		}
 	}
 
@@ -345,7 +362,7 @@ public:
 		Key& record = keys[key];
 		if (record.count == 0xFFFFu)
 		{
-			panic();
+			panic(kPanicOverflow);
 			fault = kFaultNoteOverflow;
 			return;
 		}
@@ -405,8 +422,9 @@ public:
 	}
 
 	/* Hard panic: release, silence the receiver, centre bends, disarm. */
-	void panic()
+	void panic(PanicReason reason = kPanicNone)
 	{
+		lastPanicReason = reason;
 		const int base = outputBase();
 		for (int i = 0; i < kChannels; ++i)
 		{
@@ -577,6 +595,7 @@ private:
 	bool tableValid;
 	bool armed;
 	Fault fault;
+	PanicReason lastPanicReason;
 	TableError error;
 };
 
