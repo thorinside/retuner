@@ -413,10 +413,34 @@ bool draw(_NT_algorithm* self)
 	NT_drawText(0, 40, "Table:");
 	NT_drawText(56, 40, engine.isTableValid() ? "Valid" : "Invalid");
 
+	const char* status = nullptr;
 	if (algorithm->scaleError)
-		NT_drawText(0, 50, "Scale load failed");
+		status = "Scale load failed";
 	else if (engine.faultState() != retuner::kFaultNone)
-		NT_drawText(0, 50, "Fault: overflow");
+		status = "Fault: overflow";
+	else if (!engine.isTableValid())
+	{
+		switch (engine.tableError())
+		{
+		case retuner::kTableBendUnset:
+			status = "Set Bend Range";
+			break;
+		case retuner::kTableBendInvalid:
+			status = "Bad Bend Range";
+			break;
+		case retuner::kTableBendTooSmall:
+			status = "Bend Range low";
+			break;
+		case retuner::kTableScaleInvalid:
+			status = "Load Scale File";
+			break;
+		default:
+			status = "Table invalid";
+			break;
+		}
+	}
+	if (status)
+		NT_drawText(0, 50, status);
 
 	return false;
 }

@@ -48,7 +48,9 @@ with the stock microtuned algorithms.
 The plugin starts **disarmed** with `R` unset. Choose the `Output` profile, set
 `Bend Range` to the receiver's actual range, choose a `Scale File`, and set
 `Arm` to `On`. Changing `Channel`, `Scale File`, `Bend Range` or `Output` while
-armed sends a panic and disarms.
+armed sends a panic and disarms. If arming is refused, `Arm` returns to Off and
+the status line shows the reason (`Set Bend Range`, `Load Scale File`, or a
+bend-range/table error).
 
 Before any `.scl` file has loaded (including when the card is not mounted),
 the built-in 12-TET table is used. A loaded scale stays in memory and remains
