@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <distingnt/api.h>
+#include <distingnt/microtuning.h>
 
 #include "retuner_core.h"
 
@@ -31,11 +32,49 @@ struct Stub
 	uint32_t lastDestination = 0;
 	_NT_algorithm* algorithm = nullptr;
 	std::vector<Message> messages;
+
+	bool mounted = true;
+	uint32_t numScl = 1;
+	_NT_sclNote* notes = nullptr;
+	uint32_t numNotes = 0;
+	const char* scaleName = "12-TET";
+	int readCalls = 0;
+	int updateCalls = 0;
 };
 
 Stub stub;
 
 int failures = 0;
+
+_NT_sclNote equalTemperamentNotes[12];
+_NT_sclNote justNotes[12];
+
+void setRatio(_NT_sclNote& note, int32_t numerator, int32_t denominator)
+{
+	note.numeratorValue = numerator;
+	note.denominatorValue = -denominator;
+}
+
+void resetScaleStub()
+{
+	for (int i = 0; i < 12; ++i)
+		equalTemperamentNotes[i].octaves = (double)(i + 1) / 12.0;
+
+	static const int ratios[12][2] = {
+		{ 16, 15 }, { 9, 8 }, { 6, 5 }, { 5, 4 }, { 4, 3 }, { 45, 32 },
+		{ 3, 2 }, { 8, 5 }, { 5, 3 }, { 9, 5 }, { 15, 8 }, { 2, 1 }
+	};
+	for (int i = 0; i < 12; ++i)
+		setRatio(justNotes[i], ratios[i][0], ratios[i][1]);
+
+	stub.mounted = true;
+	stub.numScl = 1;
+	stub.notes = equalTemperamentNotes;
+	stub.numNotes = 12;
+	stub.scaleName = "12-TET";
+	stub.readCalls = 0;
+	stub.updateCalls = 0;
+}
 
 void check(bool ok, const char* what)
 {
@@ -58,6 +97,7 @@ struct Fixture
 
 	Fixture()
 	{
+		resetScaleStub();
 		_NT_algorithmRequirements req;
 		factory()->calculateRequirements(req, nullptr);
 		static char storage[8192];
@@ -65,7 +105,7 @@ struct Fixture
 		algorithm = factory()->construct(ptrs, req, nullptr);
 		std::memset(values, 0, sizeof values);
 		values[0] = 1;   /* channel 1 */
-		values[1] = 0;   /* 12-TET */
+		values[1] = 0;   /* .scl index 0 */
 		values[2] = 200; /* 2.00 semitones */
 		values[3] = 0;   /* disarmed */
 		algorithm->v = values;
@@ -78,6 +118,8 @@ struct Fixture
 		stub.setCalls = 0;
 		stub.lastDestination = 0;
 		stub.messages.clear();
+		stub.readCalls = 0;
+		stub.updateCalls = 0;
 	}
 };
 
@@ -187,6 +229,42 @@ void testMidiForwarding()
 	check(stub.messages.empty(), "other channel ignored");
 }
 
+/* A loaded .scl file rebuilds the 128-key table. */
+void testScaleLoadRetunes()
+{
+	Fixture f;
+	stub.notes = justNotes;
+	stub.scaleName = "just.scl";
+	f.changed(0);
+	f.changed(1);
+	f.changed(2);
+	check(stub.readCalls == 1, "scale request issued");
+	f.values[3] = 1;
+	f.changed(3);
+	f.resetStub();
+
+	factory()->midiMessage(f.algorithm, 0x90, 64, 100);
+	check(stub.messages.size() == 2, "JI sends bend then on");
+	check(stub.messages[0].b0 == 0xE0 && stub.messages[0].b1 == 0x4F && stub.messages[0].b2 == 0x3B, "JI E4 bend");
+	check(stub.messages[1].b0 == 0x90 && stub.messages[1].b1 == 0x40 && stub.messages[1].b2 == 0x64, "JI E4 on");
+}
+
+/* A failed .scl read must not fall back to a stale table when R changes. */
+void testScaleLoadFailureRefusesArm()
+{
+	Fixture f;
+	stub.numNotes = 0;
+	f.changed(0);
+	f.changed(1);
+	f.changed(2);
+	f.resetStub();
+
+	f.values[3] = 1;
+	f.changed(3);
+	check(stub.setCalls == 1, "failed scale arms refused");
+	check(stub.setValue == 0, "failed scale writes Arm off");
+}
+
 } // namespace
 
 extern "C" {
@@ -238,6 +316,52 @@ int NT_intToString(char* buffer, int32_t value)
 	return std::snprintf(buffer, 16, "%d", value);
 }
 
+void NT_updateParameterDefinition(uint32_t, uint32_t)
+{
+	++stub.updateCalls;
+}
+
+bool NT_isSdCardMounted(void)
+{
+	return stub.mounted;
+}
+
+uint32_t NT_getNumScl(void)
+{
+	return stub.numScl;
+}
+
+void NT_getSclInfo(uint32_t index, _NT_sclInfo& info)
+{
+	info.name = index < stub.numScl ? stub.scaleName : nullptr;
+}
+
+bool NT_readScl(_NT_sclRequest& request)
+{
+	++stub.readCalls;
+	if (!stub.mounted || stub.numNotes == 0 || !stub.notes)
+	{
+		request.error = true;
+		return false;
+	}
+
+	const uint32_t count = stub.numNotes < request.maxNotes ? stub.numNotes : request.maxNotes;
+	for (uint32_t i = 0; i < count; ++i)
+		request.notes[i] = stub.notes[i];
+	request.numNotes = count;
+	request.error = false;
+
+	if (request.nameBuffer && request.nameBufferSize > 0)
+	{
+		std::strncpy(request.nameBuffer, stub.scaleName, request.nameBufferSize - 1);
+		request.nameBuffer[request.nameBufferSize - 1] = 0;
+	}
+
+	if (request.callback)
+		request.callback(request.callbackData);
+	return true;
+}
+
 } // extern "C"
 
 int main()
@@ -248,6 +372,8 @@ int main()
 	testArmRefusedOnInvalidTable();
 	testConfigChangeSyncsArm();
 	testMidiForwarding();
+	testScaleLoadRetunes();
+	testScaleLoadFailureRefusesArm();
 
 	if (failures)
 	{

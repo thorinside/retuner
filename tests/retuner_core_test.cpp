@@ -56,6 +56,33 @@ void checkMessage(const Message& m, uint8_t b0, uint8_t b1, uint8_t b2, const ch
 	check(m.b0 == b0 && m.b1 == b1 && m.b2 == b2, what);
 }
 
+/* Build a repeating scale from SCL-style ratios; the last ratio is the period. */
+retuner::Scale scaleFromRatios(const int ratios[][2], int count)
+{
+	retuner::Scale scale;
+	scale.count = (uint8_t)count;
+	for (int i = 0; i < count; ++i)
+		scale.interval[i] = std::log((double)ratios[i][0] / ratios[i][1]) / std::log(2.0);
+	return scale;
+}
+
+retuner::Scale justC7Scale()
+{
+	static const int ratios[7][2] = {
+		{ 9, 8 }, { 5, 4 }, { 4, 3 }, { 3, 2 }, { 5, 3 }, { 15, 8 }, { 2, 1 }
+	};
+	return scaleFromRatios(ratios, 7);
+}
+
+retuner::Scale justC12Scale()
+{
+	static const int ratios[12][2] = {
+		{ 16, 15 }, { 9, 8 }, { 6, 5 }, { 5, 4 }, { 4, 3 }, { 45, 32 },
+		{ 3, 2 }, { 8, 5 }, { 5, 3 }, { 9, 5 }, { 15, 8 }, { 2, 1 }
+	};
+	return scaleFromRatios(ratios, 12);
+}
+
 /* AC1: pitch -> base note and 14-bit bend. */
 void testMakeTarget()
 {
@@ -73,22 +100,22 @@ void testMakeTarget()
 	check(!retuner::makeTarget(60.0, std::nan(""), t), "NaN bend range");
 }
 
-/* AC1: fixed C-major JI is white-keys-only and octave-repeating. */
+/* AC1: 1/1 is MIDI 60 and each key advances one scale degree. */
 void testPitchFor()
 {
 	double p;
-	check(retuner::pitchFor(retuner::kTuningJustC, 60, p) && std::fabs(p - 60.0) < 1e-9, "JI C4");
-	check(retuner::pitchFor(retuner::kTuningJustC, 64, p) && std::fabs(p - 63.863137138648) < 1e-9, "JI E4");
-	check(retuner::pitchFor(retuner::kTuningJustC, 67, p) && std::fabs(p - 67.019550008653) < 1e-9, "JI G4");
-	check(retuner::pitchFor(retuner::kTuningJustC, 69, p) && std::fabs(p - 68.84358713) < 1e-9, "JI A4");
-	check(retuner::pitchFor(retuner::kTuningJustC, 71, p) && std::fabs(p - 70.8826871473) < 1e-9, "JI B4");
-	check(retuner::pitchFor(retuner::kTuningJustC, 72, p) && std::fabs(p - 72.0) < 1e-9, "JI C5");
-	check(retuner::pitchFor(retuner::kTuningJustC, 0, p) && std::fabs(p - 0.0) < 1e-9, "JI C-1");
-	check(retuner::pitchFor(retuner::kTuningJustC, 11, p) && std::fabs(p - 10.8826871473) < 1e-9, "JI B-1");
-	check(retuner::pitchFor(retuner::kTuningJustC, 12, p) && std::fabs(p - 12.0) < 1e-9, "JI C0");
-	check(!retuner::pitchFor(retuner::kTuningJustC, 61, p), "JI black key unmapped");
-	check(retuner::pitchFor(retuner::kTuningEqualTemperament, 61, p) && p == 61.0, "12-TET identity");
-	check(retuner::pitchFor(retuner::kTuningEqualTemperament, 127, p) && p == 127.0, "12-TET top");
+	const retuner::Scale et = retuner::equalTemperamentScale();
+	check(retuner::pitchFor(et, 0, p) && p == 0.0, "12-TET bottom");
+	check(retuner::pitchFor(et, 61, p) && p == 61.0, "12-TET identity");
+	check(retuner::pitchFor(et, 127, p) && p == 127.0, "12-TET top");
+
+	const retuner::Scale ji = justC7Scale();
+	check(retuner::pitchFor(ji, 60, p) && std::fabs(p - 60.0) < 1e-9, "JI 1/1 on C4");
+	check(retuner::pitchFor(ji, 61, p) && std::fabs(p - (60.0 + 12.0 * std::log2(9.0 / 8.0))) < 1e-9, "JI key 61 is 9/8");
+	check(retuner::pitchFor(ji, 62, p) && std::fabs(p - (60.0 + 12.0 * std::log2(5.0 / 4.0))) < 1e-9, "JI key 62 is 5/4");
+	check(retuner::pitchFor(ji, 66, p) && std::fabs(p - (60.0 + 12.0 * std::log2(15.0 / 8.0))) < 1e-9, "JI key 66 is 15/8");
+	check(retuner::pitchFor(ji, 67, p) && std::fabs(p - 72.0) < 1e-9, "JI period repeats at key 67");
+	check(retuner::pitchFor(ji, 59, p) && std::fabs(p - (48.0 + 12.0 * std::log2(15.0 / 8.0))) < 1e-9, "JI period repeats below C4");
 }
 
 /* AC1/AC5: table validation and arming. */
@@ -98,12 +125,12 @@ void testArmAndTable()
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
 
-	check(engine.configureTuning(retuner::kTuningEqualTemperament, 0.0), "configure unset");
+	check(engine.configureScale(retuner::equalTemperamentScale(), 0.0), "configure unset");
 	check(!engine.isTableValid(), "unset table invalid");
 	check(engine.tableError() == retuner::kTableBendUnset, "unset error");
 	check(!engine.arm(), "cannot arm unset table");
 
-	check(engine.configureTuning(retuner::kTuningEqualTemperament, 2.0), "configure 12-TET");
+	check(engine.configureScale(retuner::equalTemperamentScale(), 2.0), "configure 12-TET");
 	check(engine.isTableValid(), "12-TET table valid");
 	check(engine.target(60).mapped && engine.target(60).bend == 8192, "12-TET C4");
 	for (int key = 0; key < 128; ++key)
@@ -117,17 +144,22 @@ void testArmAndTable()
 	engine.disarm();
 	check(!engine.isArmed(), "disarmed");
 
-	check(engine.configureTuning(retuner::kTuningJustC, 2.0), "configure JI");
+	check(engine.configureScale(justC12Scale(), 2.0), "configure JI");
 	check(engine.isTableValid(), "JI table valid at R=2");
-	check(engine.target(61).mapped == 0, "JI black key unmapped");
+	check(engine.target(61).mapped, "12-note JI maps every key");
 	check(engine.target(64).bend == 7631, "JI E4 bend");
 
-	check(engine.configureTuning(retuner::kTuningJustC, 0.01), "configure JI tight");
+	retuner::Scale empty;
+	check(engine.configureScale(empty, 2.0), "configure empty scale");
+	check(!engine.isTableValid(), "empty scale invalid");
+	check(engine.tableError() == retuner::kTableScaleInvalid, "empty scale error");
+
+	check(engine.configureScale(justC12Scale(), 0.01), "configure JI tight");
 	check(!engine.isTableValid(), "JI table invalid at R=0.01");
 	check(engine.tableError() == retuner::kTableBendTooSmall, "tight error");
 
 	/* Non-finite R must be rejected, not silently treated as a huge range. */
-	check(engine.configureTuning(retuner::kTuningJustC, HUGE_VAL), "configure infinite R");
+	check(engine.configureScale(justC12Scale(), HUGE_VAL), "configure infinite R");
 	check(!engine.isTableValid(), "infinite table invalid");
 	check(engine.tableError() == retuner::kTableBendInvalid, "infinite error");
 	check(!engine.arm(), "cannot arm infinite range");
@@ -139,7 +171,7 @@ void testVoiceAllocation()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	engine.processChannelMessage(0x90, 60, 100);
@@ -176,7 +208,7 @@ void testJustIntonationOverlap()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningJustC, 2.0);
+	engine.configureScale(justC12Scale(), 2.0);
 	engine.arm();
 
 	engine.processChannelMessage(0x90, 60, 100);
@@ -211,7 +243,7 @@ void testBendBeforeOn()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningJustC, 2.0);
+	engine.configureScale(justC12Scale(), 2.0);
 	engine.arm();
 
 	engine.processChannelMessage(0x90, 64, 100);
@@ -226,7 +258,7 @@ void testRepeatsAndOffs()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	engine.processChannelMessage(0x90, 60, 100);
@@ -253,7 +285,7 @@ void testVelocityZeroRelease()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	engine.processChannelMessage(0x90, 60, 100);
@@ -263,23 +295,30 @@ void testVelocityZeroRelease()
 	check(engine.voicesInUse() == 0, "velocity-zero frees the voice");
 }
 
-/* AC3: unmapped keys are tracked silently and cannot kill another key. */
+/* AC3: keys outside the receiver range stay silent and cannot kill another key. */
 void testUnmappedKey()
 {
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningJustC, 2.0);
-	engine.arm();
 
-	engine.processChannelMessage(0x90, 61, 100);
+	/* One degree per period: keys above C4 rise an octave per key and quickly
+	   leave the representable MIDI range. */
+	retuner::Scale octaves;
+	octaves.count = 1;
+	octaves.interval[0] = 1.0;
+	engine.configureScale(octaves, 2.0);
+	engine.arm();
+	check(!engine.target(66).mapped, "out-of-range key unmapped");
+
+	engine.processChannelMessage(0x90, 66, 100);
 	check(rec.empty(), "unmapped key sends nothing");
 
-	engine.processChannelMessage(0x80, 61, 0);
+	engine.processChannelMessage(0x80, 66, 0);
 	check(rec.empty(), "unmapped key off sends nothing");
 
 	engine.processChannelMessage(0x90, 60, 100);
-	engine.processChannelMessage(0x80, 61, 0);
+	engine.processChannelMessage(0x80, 66, 0);
 	check(rec.messages.size() == 2, "unmapped off does not kill mapped key");
 }
 
@@ -289,7 +328,7 @@ void testOverflowAndDrop()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	const uint8_t keys[9] = { 60, 62, 64, 65, 67, 69, 71, 72, 74 };
@@ -320,7 +359,7 @@ void testCountOverflow()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	for (int i = 0; i < 0xFFFF; ++i)
@@ -340,7 +379,7 @@ void testExcludedControllers()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	engine.processChannelMessage(0xE0, 0x00, 0x40); /* pitch bend */
@@ -360,7 +399,7 @@ void testAllNotesOffAndPanic()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	engine.processChannelMessage(0x90, 60, 100);
@@ -407,7 +446,7 @@ void testPanicAllChannels()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	const uint8_t keys[8] = { 60, 62, 64, 65, 67, 69, 71, 72 };
@@ -433,7 +472,7 @@ void testRealtime()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	engine.processChannelMessage(0x90, 60, 100);
@@ -461,7 +500,7 @@ void testDroppedKeyMidGesture()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	const uint8_t keys[9] = { 60, 62, 64, 65, 67, 69, 71, 72, 74 };
@@ -481,7 +520,7 @@ void testReconfiguration()
 	Recorder rec;
 	retuner::Engine engine;
 	engine.setOutput(rec.out());
-	engine.configureTuning(retuner::kTuningEqualTemperament, 2.0);
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
 	engine.arm();
 
 	engine.processChannelMessage(0x90, 60, 100);
@@ -492,14 +531,14 @@ void testReconfiguration()
 
 	engine.arm();
 	rec.clear();
-	check(engine.configureTuning(retuner::kTuningJustC, 2.0), "tuning change reported");
+	check(engine.configureScale(justC12Scale(), 2.0), "tuning change reported");
 	check(!engine.isArmed(), "tuning change disarms");
 	check(!rec.empty(), "tuning change panics");
 
 	/* Unchanged configuration is not a panic boundary. */
 	engine.arm();
 	rec.clear();
-	check(!engine.configureTuning(retuner::kTuningJustC, 2.0), "same tuning ignored");
+	check(!engine.configureScale(justC12Scale(), 2.0), "same tuning ignored");
 	check(engine.isArmed(), "same tuning leaves armed");
 	check(rec.empty(), "same tuning sends nothing");
 }

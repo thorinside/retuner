@@ -6,6 +6,7 @@
  *
  * Contract summary:
  *  - one selected input channel, eight reserved receiver channels (1-8);
+ *  - tuning is a repeating Scala scale anchored at MIDI 60 (C4);
  *  - every admitted key gets its pitch bend sent before its note-on;
  *  - a key holds one receiver voice until its final note-off arrives;
  *  - panic (CC120/121, realtime Stop/Reset, overflow, setup change) releases
@@ -23,6 +24,8 @@ enum
 {
 	kChannels = 8,
 	kKeys = 128,
+	kMaxScaleNotes = 128,
+	kRootNote = 60,
 };
 
 constexpr uint32_t fourCc(char a, char b, char c, char d)
@@ -33,12 +36,6 @@ constexpr uint32_t fourCc(char a, char b, char c, char d)
 
 /* thorinside namespace, algorithm "Rt" (retuner). */
 constexpr uint32_t kGuid = fourCc('T', 'h', 'R', 't');
-
-enum Tuning
-{
-	kTuningEqualTemperament = 0,
-	kTuningJustC = 1,
-};
 
 enum Fault
 {
@@ -52,6 +49,7 @@ enum TableError
 	kTableBendUnset,
 	kTableBendInvalid,
 	kTableBendTooSmall,
+	kTableScaleInvalid,
 };
 
 struct MidiOut
@@ -67,6 +65,29 @@ struct Target
 	uint8_t note;     /* base note sent with the bend */
 	uint8_t mapped;   /* 0 = this key is intentionally silent */
 };
+
+/*
+ * One Scala scale: `count` pitch values from the .scl file. Degree 0 is the
+ * implicit 1/1; interval[d - 1] is degree d. The last value is the formal
+ * octave (period) and is not a playable degree in the mapping pattern.
+ */
+struct Scale
+{
+	Scale() : count(0), interval() {}
+
+	uint8_t count;
+	double interval[kMaxScaleNotes];
+};
+
+/* Built-in fallback so the plugin is usable without an SD card or .scl file. */
+inline Scale equalTemperamentScale()
+{
+	Scale scale;
+	scale.count = 12;
+	for (int i = 0; i < 12; ++i)
+		scale.interval[i] = (double)(i + 1) / 12.0;
+	return scale;
+}
 
 struct Key
 {
@@ -117,45 +138,40 @@ inline bool makeTarget(double pitch, double bendRange, Target& out)
 	return true;
 }
 
-/* Absolute pitch of one key, or false when the tuning leaves it unmapped. */
-inline bool pitchFor(int tuning, int key, double& pitch)
+/*
+ * Absolute pitch of one key under a repeating scale.
+ *
+ * The disting NT automatic keyboard map anchors 1/1 at the root note and
+ * advances one scale degree per key. Here the root is fixed to MIDI 60, so
+ * key 60 is 1/1 and key 60 + count starts the next period.
+ */
+inline bool pitchFor(const Scale& scale, int key, double& pitch)
 {
-	if (tuning == kTuningJustC)
+	if (scale.count == 0 || scale.count > kMaxScaleNotes)
+		return false;
+	if (key < 0 || key >= kKeys)
+		return false;
+
+	int offset = key - kRootNote;
+	int octave = offset / scale.count;
+	int step = offset % scale.count;
+	if (step < 0)
 	{
-		/* Fixed C major, anchored so that middle C (MIDI 60) is exact. */
-		int octave = (key - 60) / 12;
-		int degree = (key - 60) % 12;
-		if (degree < 0)
-		{
-			degree += 12;
-			--octave;
-		}
-		/* 12*log2(ratio) for 1, 9/8, 5/4, 4/3, 3/2, 5/3, 15/8.
-		   Hard-coded so the plugin does not import log2 from the firmware. */
-		double offset = 0.0;
-		switch (degree)
-		{
-		case 0: offset = 0.0; break;
-		case 2: offset = 2.039100017307744; break;
-		case 4: offset = 3.863137138648344; break;
-		case 5: offset = 4.980449991346128; break;
-		case 7: offset = 7.019550008653872; break;
-		case 9: offset = 8.843587129994472; break;
-		case 11: offset = 10.882687147302228; break;
-		default: return false;
-		}
-		pitch = 60.0 + 12.0 * octave + offset;
-		return true;
+		step += scale.count;
+		--octave;
 	}
-	pitch = (double)key;
-	return true;
+
+	const double within = step > 0 ? scale.interval[step - 1] : 0.0;
+	const double period = scale.interval[scale.count - 1];
+	pitch = (double)kRootNote + 12.0 * ((double)octave * period + within);
+	return isfinite(pitch);
 }
 
 class Engine
 {
 public:
 	Engine()
-		: output(), selectedChannel(0), tuning(kTuningEqualTemperament),
+		: output(), selectedChannel(0), scale(equalTemperamentScale()),
 		  bendRange(0.0), configured(false), tableValid(false), armed(false),
 		  fault(kFaultNone), error(kTableBendUnset)
 	{
@@ -166,7 +182,7 @@ public:
 	void setOutput(MidiOut out) { output = out; }
 
 	int channel() const { return selectedChannel; }
-	int tuningMode() const { return tuning; }
+	const Scale& currentScale() const { return scale; }
 	double bendRangeSemitones() const { return bendRange; }
 	bool isArmed() const { return armed; }
 	bool isTableValid() const { return tableValid; }
@@ -198,21 +214,26 @@ public:
 		return true;
 	}
 
-	bool configureTuning(int mode, double semitones)
+	bool configureScale(const Scale& newScale, double semitones)
 	{
-		if (mode < 0)
-			mode = 0;
-		if (mode > 1)
-			mode = 1;
-		if (configured && mode == tuning && semitones == bendRange)
+		if (configured && sameScale(newScale, scale) && semitones == bendRange)
 			return false;
 		if (armed)
 			panic();
-		tuning = mode;
+		scale = newScale;
 		bendRange = semitones;
 		configured = true;
 		rebuild();
 		return true;
+	}
+
+	/* Force the table invalid while a new .scl file is being loaded. */
+	void invalidateTable()
+	{
+		for (int i = 0; i < kKeys; ++i)
+			table[i] = Target();
+		tableValid = false;
+		error = kTableScaleInvalid;
 	}
 
 	bool arm()
@@ -366,6 +387,16 @@ public:
 	}
 
 private:
+	static bool sameScale(const Scale& a, const Scale& b)
+	{
+		if (a.count != b.count)
+			return false;
+		for (int i = 0; i < a.count; ++i)
+			if (a.interval[i] != b.interval[i])
+				return false;
+		return true;
+	}
+
 	void send(uint8_t status, uint8_t d1, uint8_t d2) const
 	{
 		if (output.send3)
@@ -408,12 +439,38 @@ private:
 			error = kTableBendInvalid;
 			return;
 		}
+		if (scale.count == 0 || scale.count > kMaxScaleNotes)
+		{
+			error = kTableScaleInvalid;
+			return;
+		}
+
+		const double period = scale.interval[scale.count - 1];
+		if (!isfinite(period) || !(period > 0.0))
+		{
+			error = kTableScaleInvalid;
+			return;
+		}
+		for (int i = 0; i < scale.count; ++i)
+		{
+			if (!isfinite(scale.interval[i]))
+			{
+				error = kTableScaleInvalid;
+				return;
+			}
+		}
 
 		for (int key = 0; key < kKeys; ++key)
 		{
 			double pitch = 0.0;
-			if (!pitchFor(tuning, key, pitch))
+			if (!pitchFor(scale, key, pitch))
 				continue;
+
+			/* Keys outside the receiver's representable note range are
+			   intentionally silent rather than folded to a neighbour. */
+			if (pitch < -bendRange || pitch > 127.0 + bendRange)
+				continue;
+
 			Target resolved;
 			if (!makeTarget(pitch, bendRange, resolved))
 			{
@@ -433,7 +490,7 @@ private:
 	Key keys[kKeys];
 	Voice voices[kChannels];
 	int selectedChannel;
-	int tuning;
+	Scale scale;
 	double bendRange;
 	bool configured;
 	bool tableValid;

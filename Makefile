@@ -67,12 +67,12 @@ $(BUILD_DIR):
 else ifeq ($(TARGET),test)
 $(TEST_CORE): tests/retuner_core_test.cpp src/retuner_core.h
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(CFLAGS) $(INCLUDES) -o $@ tests/retuner_core_test.cpp
+	$(CXX) $(CFLAGS) $(INCLUDES) -o $@ tests/retuner_core_test.cpp -lm
 	@echo "Built: $@"
 
 $(TEST_ADAPTER): tests/retuner_adapter_test.cpp src/retuner.cpp src/retuner_core.h
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) $(CFLAGS) $(INCLUDES) -o $@ tests/retuner_adapter_test.cpp src/retuner.cpp
+	$(CXX) $(CFLAGS) $(INCLUDES) -o $@ tests/retuner_adapter_test.cpp src/retuner.cpp -lm
 	@echo "Built: $@"
 endif
 
@@ -108,7 +108,7 @@ inspect: $(OUTPUT)
 	@$(ARM_NM) --defined-only $(OUTPUT) | grep -Eq '[[:space:]]pluginEntry$$' \
 		|| (echo "pluginEntry export is missing" >&2; exit 1)
 	@echo "PASS: $(OUTPUT) is a little-endian relocatable ARM plugin with pluginEntry"
-	@$(ARM_NM) -u $(OUTPUT) | awk '{print $$2}' | sort -u | grep -Ev '^(NT_algorithmIndex|NT_drawText|NT_intToString|NT_parameterOffset|NT_sendMidi3ByteMessage|NT_setParameterFromUi|memset)$$' \
+	@$(ARM_NM) -u $(OUTPUT) | awk '{print $$2}' | sort -u | grep -Ev '^(NT_algorithmIndex|NT_drawText|NT_getNumScl|NT_getSclInfo|NT_intToString|NT_isSdCardMounted|NT_parameterOffset|NT_readScl|NT_sendMidi3ByteMessage|NT_setParameterFromUi|NT_updateParameterDefinition|memcpy|memset)$$' \
 		&& { echo "Unexpected undefined symbol(s) in $(OUTPUT)" >&2; exit 1; } || true
 	@echo "Review undefined symbols against the pinned API/runtime:"
 	@$(ARM_NM) -u $(OUTPUT) || true

@@ -6,56 +6,84 @@ the note-on, so a receiver hears the target frequency immediately. It is a
 static microtuner: it does not recognise chords, snap to a scale, or adapt to
 the input.
 
+Tuning comes from a Scala `.scl` file in the disting NT `scl` folder. The
+plugin also has a built-in 12-TET fallback for the case where no scale has been
+selected or the card is not mounted.
+
 The plugin GUID is `ThRt`; the algorithm name is **Retuner**.
 
 ## What it is not
 
 - Not a DAW/computer pass-through. The disting NT does the work on the module.
-- Not a generic MPE master/member zone. It is a Monumatic-specific profile:
-  one voice per MIDI channel 1–8, no master-channel traffic.
+- Not a generic MPE master/member transmitter. It is a per-channel bend
+  utility: one voice per MIDI channel 1–8, with no master-channel traffic.
 - Not a transparent expressive bridge. Pitch bend, pressure, CC74, pedals,
   program changes, other CCs, SysEx and clock are not forwarded.
-- Not a Scala/KBM importer. The two tuning tables are fixed.
+- Not a `.kbm` importer. It uses the disting NT automatic keyboard mapping
+  described below, with 1/1 fixed at MIDI 60.
 
 ## Installation
 
 1. Build or obtain `plugins/retuner.o`.
 2. Copy it to the disting NT MicroSD card under `programs/plug-ins/`.
-3. Rescan plug-ins on the module and add the `Retuner` algorithm.
+3. Copy the scales you want to use to the card's `scl` folder.
+4. Rescan plug-ins on the module and add the `Retuner` algorithm.
+
+The module's normal Scala file library is used, so the same `.scl` files work
+with the stock microtuned algorithms.
 
 ## Controls
 
 | Parameter | Default | Range | Meaning |
 | --- | --- | --- | --- |
 | Channel | 1 | 1–16 | The single MIDI channel the retuner listens on. |
-| Tuning | 12-TET | 12-TET / JI C | Fixed 12-tone equal temperament or fixed C-major just intonation. |
+| Scale | 0 / built-in 12-TET | `.scl` file index | Scala scale loaded from the card. The parameter text shows the file name. |
 | Bend Range | 0 (unset) | 0–48.00 semitones | The receiver's pitch-bend range `R`, in semitones. Must be set before arming. |
 | Arm | Off | Off / On | Arm the retuner. Arming requires a valid table and `R > 0`. |
 
 The plugin starts **disarmed** with `R` unset. Set `Bend Range` to the
-receiver's actual range and set `Arm` to `On`. Changing `Channel`, `Tuning`
-or `Bend Range` while armed sends a panic and disarms.
+receiver's actual range, choose a `Scale`, and set `Arm` to `On`. Changing
+`Channel`, `Scale` or `Bend Range` while armed sends a panic and disarms.
 
-## Tuning tables
+If the card is not mounted, or no `.scl` file has loaded, the built-in
+12-TET table is used. If a selected file fails to load, the table is marked
+invalid and arming is refused until a valid file loads.
 
-### 12-TET (default)
+## SCL mapping
 
-MIDI key `n` maps to pitch `n`; every key is mapped. The receiver's own
-equal-tempered tuning must be active and its internal temperament/octave
-stretching off.
+The mapping follows the disting NT automatic keyboard map:
 
-### Fixed C-major JI
+- The implicit degree 0 (1/1) is anchored at MIDI note 60.
+- Each successive MIDI key advances one scale degree.
+- The last pitch value in the `.scl` file is the formal octave (the period).
+- The pattern repeats after that number of keys.
 
-Middle C (MIDI 60) is anchored to C4 = 261.625565300599 Hz. The white keys
-use the ratios 1, 9/8, 5/4, 4/3, 3/2, 5/3, 15/8, repeated by 2/1 at octave
-boundaries. Black keys are **unmapped and silent**, not snapped to white
-keys. The root stays C; there is no chord-dependent root inference. A4 is
-436.042608834 Hz in this table; A440 is only the equal-tempered coordinate
-used to establish C4.
+So a 12-note scale maps MIDI 60–71 to its first twelve degrees and puts 1/1 of
+the next period on MIDI 72. A seven-note scale maps seven keys per period;
+black keys are **not** automatically silent or snapped to white keys.
 
-If a mapped key cannot be represented within the configured `R`, the table
-is rejected and the plugin will not arm. It does not silently flatten the
-pitch.
+MIDI note 60 is C4 = 261.625565300599 Hz. This is the only absolute pitch
+anchor; the `.scl` file supplies the intervals above it. The plugin does not
+read a `.kbm` file, reference frequency or alternate root from the card.
+
+If a key's target would be outside the receiver's representable MIDI range
+(0–127 plus the configured bend range), that key is intentionally silent. It
+is not folded to a neighbour. If a target is inside that range but needs more
+bend than `R`, the whole table is rejected rather than flattened.
+
+### Worked 12-note just-intonation example
+
+Assume a 12-note 5-limit `.scl` file and an illustrative `R = 2` (not an
+assumed Monumatic value):
+
+| Input | Target | Base | Bend | Bytes |
+| --- | --- | --- | --- | --- |
+| C4 / 60 | 261.625565301 Hz | 60 | 8192 | `00 40` |
+| E4 / 64 | 327.031956626 Hz | 64 | 7631 | `4F 3B` |
+| G4 / 67 | 392.438347951 Hz | 67 | 8272 | `50 40` |
+
+The C/E/G chord therefore sends, in order:
+`E0 00 40; 90 3C 64; E1 4F 3B; 91 40 64; E2 50 40; 92 43 64`.
 
 ## Pitch-bend bytes
 
@@ -64,17 +92,6 @@ For a target pitch `p`, the receiver base note is
 `q = 8192 + roundHalfAwayFromZero(8192 * (p - b) / R)`, limited to
 0..16383 only for the representable positive endpoint. Bend is sent LSB
 first. Interior rounding error is at most `100R/16384` cents.
-
-Worked examples at an illustrative `R = 2` (not an assumed Monumatic value):
-
-| Input | Target | Base | Bend | Bytes |
-| --- | --- | --- | --- | --- |
-| C4 / 60 | 261.625565301 Hz | 60 | 8192 | `00 40` |
-| JI E4 / 64 | 327.031956626 Hz | 64 | 7631 | `4F 3B` |
-| JI G4 / 67 | 392.438347951 Hz | 67 | 8272 | `50 40` |
-
-The C/E/G chord therefore sends, in order:
-`E0 00 40; 90 3C 64; E1 4F 3B; 91 40 64; E2 50 40; 92 43 64`.
 
 ## Voice behaviour
 
@@ -106,7 +123,7 @@ The C/E/G chord therefore sends, in order:
   state and disarms. CC121 is never forwarded as a receiver reset.
 - **Realtime Stop (0xFC) / System Reset (0xFF):** hard panic. Start/Continue do
   not replay notes or rearm.
-- **Overflow or configuration change:** hard panic.
+- **Overflow, scale change or other configuration change:** hard panic.
 
 Panic is a proposed kill sequence whose exact receiver effect must be checked
 on hardware. The plugin cannot detect a DIN unplug; it does not use an
@@ -153,5 +170,5 @@ take 48 bytes/15.36 ms, with a 13.44 ms first-to-eighth note-completion skew
 before competing traffic. Chords are not sample-accurate.
 
 Physical acceptance on the actual OXI/NT/Monumatic devices was not performed
-as part of this draft. Treat the plugin as a researched, tested-on-host
+as part of this implementation. Treat the plugin as a researched, tested-on-host
 implementation until that evidence exists.

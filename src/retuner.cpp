@@ -2,12 +2,16 @@
  * disting NT adapter for the static MIDI retuner core.
  *
  * The plugin is a MIDI-only utility: it forwards no audio, only retuned
- * note/bend/controller traffic to the MIDI breakout. See docs/retuner.md
- * for the player-facing contract and remaining hardware prerequisites.
+ * note/bend/controller traffic to the MIDI breakout. Tuning comes from the
+ * disting NT Scala (.scl) library; see docs/retuner.md for the user-facing
+ * behaviour and remaining hardware prerequisites.
  */
+#include <math.h>
 #include <new>
 #include <stdint.h>
 #include <distingnt/api.h>
+#include <distingnt/microtuning.h>
+#include <distingnt/wav.h>
 
 #include "retuner_core.h"
 
@@ -16,23 +20,22 @@ namespace {
 enum
 {
 	kParamChannel,
-	kParamTuning,
+	kParamScale,
 	kParamBendRange,
 	kParamArm,
 };
 
-static char const * const enumTuning[] = { "12-TET", "JI C" };
 static char const * const enumArm[] = { "Off", "On" };
 
 /* Bend range is configured in hundredths of a semitone; 0 means unset. */
 static const _NT_parameter parameters[] = {
 	{ .name = "Channel", .min = 1, .max = 16, .def = 1, .unit = kNT_unitNone, .scaling = 0, .enumStrings = NULL },
-	{ .name = "Tuning", .min = 0, .max = 1, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = enumTuning },
+	{ .name = "Scale", .min = 0, .max = 32767, .def = 0, .unit = kNT_unitConfirm, .scaling = 0, .enumStrings = NULL },
 	{ .name = "Bend Range", .min = 0, .max = 4800, .def = 0, .unit = kNT_unitSemitones, .scaling = kNT_scaling100, .enumStrings = NULL },
 	{ .name = "Arm", .min = 0, .max = 1, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = enumArm },
 };
 
-static const uint8_t page1[] = { kParamChannel, kParamTuning, kParamBendRange, kParamArm };
+static const uint8_t page1[] = { kParamChannel, kParamScale, kParamBendRange, kParamArm };
 
 static const _NT_parameterPage pages[] = {
 	{ .name = "Retuner", .numParams = ARRAY_SIZE(page1), .params = page1 },
@@ -45,10 +48,23 @@ static const _NT_parameterPages parameterPages = {
 
 struct _retunerAlgorithm : public _NT_algorithm
 {
-	_retunerAlgorithm() : engine(), syncing(false) {}
+	_retunerAlgorithm()
+		: engine(), params(), syncing(false), request(), notes(), scaleName(),
+		  pendingScale(0), cardMounted(false), awaitingCallback(false),
+		  dirty(false), scaleError(false) {}
 
 	retuner::Engine engine;
+	_NT_parameter params[kParamArm + 1];
 	bool syncing;
+
+	_NT_sclRequest request;
+	_NT_sclNote notes[retuner::kMaxScaleNotes];
+	char scaleName[24];
+	int pendingScale;
+	bool cardMounted;
+	bool awaitingCallback;
+	bool dirty;
+	bool scaleError;
 };
 
 /* Send one 3-byte channel message to the MIDI breakout only. */
@@ -74,6 +90,142 @@ void syncArmIfDisarmed(_retunerAlgorithm* algorithm)
 		syncArmOff(algorithm);
 }
 
+/*
+ * log2 for positive values without importing a firmware math symbol.
+ * The atanh series converges quickly after normalising into [1, 2).
+ */
+double log2Positive(double value)
+{
+	int exponent = 0;
+	while (value >= 2.0)
+	{
+		value *= 0.5;
+		++exponent;
+	}
+	while (value < 1.0)
+	{
+		value *= 2.0;
+		--exponent;
+	}
+
+	const double z = (value - 1.0) / (value + 1.0);
+	const double z2 = z * z;
+	double term = z;
+	double sum = z;
+	for (int k = 3; k <= 25; k += 2)
+	{
+		term *= z2;
+		sum += term / (double)k;
+	}
+	return (double)exponent + 2.0 * sum * 1.4426950408889634;
+}
+
+/*
+ * Convert disting NT's parsed .scl notes into core octave intervals.
+ * Degree 0 (1/1) is implicit; the last note is the formal octave.
+ */
+bool buildScale(const _NT_sclNote* notes, uint32_t numNotes, retuner::Scale& scale)
+{
+	if (numNotes == 0 || numNotes > retuner::kMaxScaleNotes)
+		return false;
+
+	scale.count = (uint8_t)numNotes;
+	for (uint32_t i = 0; i < numNotes; ++i)
+	{
+		double octaves;
+		if (notes[i].isRatio())
+		{
+			/* The parser stores a ratio denominator as a negative int32. */
+			if (notes[i].numeratorValue <= 0 ||
+			    notes[i].denominatorValue >= 0 ||
+			    notes[i].denominatorValue == INT32_MIN)
+				return false;
+			const int32_t numerator = notes[i].numeratorValue;
+			const int32_t denominator = -notes[i].denominatorValue;
+			octaves = log2Positive((double)numerator / (double)denominator);
+		}
+		else
+		{
+			octaves = notes[i].octaves;
+		}
+
+		if (!isfinite(octaves))
+			return false;
+		scale.interval[i] = octaves;
+	}
+
+	/* The formal octave must move upward or the pattern does not repeat. */
+	return isfinite(scale.interval[scale.count - 1]) &&
+	       scale.interval[scale.count - 1] > 0.0;
+}
+
+void applyLoadedScale(_retunerAlgorithm* algorithm)
+{
+	algorithm->dirty = false;
+
+	retuner::Scale scale;
+	if (algorithm->request.error ||
+	    !buildScale(algorithm->request.notes, algorithm->request.numNotes, scale))
+	{
+		algorithm->scaleError = true;
+		algorithm->engine.invalidateTable();
+		return;
+	}
+
+	algorithm->scaleError = false;
+	algorithm->engine.configureScale(scale, algorithm->engine.bendRangeSemitones());
+}
+
+void startScaleRequest(_retunerAlgorithm* algorithm, int index)
+{
+	if (index < 0)
+		index = 0;
+	if (index > 32767)
+		index = 32767;
+
+	algorithm->request.index = (uint32_t)index;
+	algorithm->dirty = false;
+	algorithm->scaleError = false;
+	algorithm->engine.invalidateTable();
+
+	algorithm->awaitingCallback = true;
+	if (!NT_readScl(algorithm->request))
+	{
+		algorithm->awaitingCallback = false;
+		algorithm->scaleError = true;
+	}
+}
+
+/*
+ * Apply a completed read and, if the user moved on while it was in flight,
+ * start the newest request. NT_readScl may complete synchronously.
+ */
+void pollScale(_retunerAlgorithm* algorithm)
+{
+	for (int guard = 0; guard < 3; ++guard)
+	{
+		if (algorithm->dirty)
+		{
+			applyLoadedScale(algorithm);
+			continue;
+		}
+		if (!algorithm->awaitingCallback &&
+		    (int)algorithm->request.index != algorithm->pendingScale)
+		{
+			startScaleRequest(algorithm, algorithm->pendingScale);
+			continue;
+		}
+		break;
+	}
+}
+
+void scaleCallback(void* callbackData)
+{
+	_retunerAlgorithm* algorithm = static_cast<_retunerAlgorithm*>(callbackData);
+	algorithm->awaitingCallback = false;
+	algorithm->dirty = true;
+}
+
 void calculateRequirements(_NT_algorithmRequirements& req, const int32_t* specifications)
 {
 	(void)specifications;
@@ -89,9 +241,22 @@ _NT_algorithm* construct(const _NT_algorithmMemoryPtrs& ptrs, const _NT_algorith
 	(void)req;
 	(void)specifications;
 	_retunerAlgorithm* algorithm = new (ptrs.sram) _retunerAlgorithm();
-	algorithm->parameters = parameters;
+
+	for (int i = 0; i < (int)ARRAY_SIZE(parameters); ++i)
+		algorithm->params[i] = parameters[i];
+	algorithm->parameters = algorithm->params;
 	algorithm->parameterPages = &parameterPages;
 	algorithm->engine.setOutput(retuner::MidiOut{ nullptr, sendMidi });
+
+	algorithm->request.notes = algorithm->notes;
+	algorithm->request.maxNotes = ARRAY_SIZE(algorithm->notes);
+	algorithm->request.nameBuffer = algorithm->scaleName;
+	algorithm->request.nameBufferSize = sizeof algorithm->scaleName;
+	algorithm->request.descriptionBuffer = nullptr;
+	algorithm->request.descriptionBufferSize = 0;
+	algorithm->request.callback = scaleCallback;
+	algorithm->request.callbackData = algorithm;
+
 	return algorithm;
 }
 
@@ -118,12 +283,28 @@ void parameterChanged(_NT_algorithm* self, int p)
 		algorithm->engine.setChannel(algorithm->v[kParamChannel] - 1);
 		syncArmIfDisarmed(algorithm);
 		break;
-	case kParamTuning:
-		algorithm->engine.configureTuning(algorithm->v[kParamTuning], algorithm->engine.bendRangeSemitones());
+	case kParamScale:
+	{
+		algorithm->engine.disarm();
+		int index = algorithm->v[kParamScale];
+		if (index < 0)
+			index = 0;
+		if (index > 32767)
+			index = 32767;
+		algorithm->pendingScale = index;
+		algorithm->engine.invalidateTable();
+		if (!algorithm->awaitingCallback)
+			startScaleRequest(algorithm, algorithm->pendingScale);
+		pollScale(algorithm);
 		syncArmIfDisarmed(algorithm);
+	}
 		break;
 	case kParamBendRange:
-		algorithm->engine.configureTuning(algorithm->engine.tuningMode(), algorithm->v[kParamBendRange] / 100.0);
+		if (algorithm->awaitingCallback || algorithm->scaleError)
+			algorithm->engine.invalidateTable();
+		else
+			algorithm->engine.configureScale(algorithm->engine.currentScale(),
+			                                 algorithm->v[kParamBendRange] / 100.0);
 		syncArmIfDisarmed(algorithm);
 		break;
 	}
@@ -146,9 +327,51 @@ void midiRealtime(_NT_algorithm* self, uint8_t byte)
 /* No audio path: the plugin only emits MIDI. */
 void step(_NT_algorithm* self, float* busFrames, int numFramesBy4)
 {
-	(void)self;
 	(void)busFrames;
 	(void)numFramesBy4;
+
+	_retunerAlgorithm* algorithm = static_cast<_retunerAlgorithm*>(self);
+	const bool mounted = NT_isSdCardMounted();
+	if (mounted != algorithm->cardMounted)
+	{
+		algorithm->cardMounted = mounted;
+		if (algorithm->engine.isArmed())
+		{
+			algorithm->engine.disarm();
+			syncArmIfDisarmed(algorithm);
+		}
+
+		if (mounted)
+		{
+			const uint32_t count = NT_getNumScl();
+			const int16_t maximum = count > 0 ? (int16_t)(count - 1) : 0;
+			if (algorithm->params[kParamScale].max != maximum)
+			{
+				algorithm->params[kParamScale].max = maximum;
+				const int32_t index = NT_algorithmIndex(algorithm);
+				if (index >= 0)
+					NT_updateParameterDefinition((uint32_t)index, kParamScale);
+			}
+
+			if (count > 0)
+			{
+				int index = algorithm->v[kParamScale];
+				if (index < 0)
+					index = 0;
+				if (index > maximum)
+					index = maximum;
+				algorithm->pendingScale = index;
+				if (!algorithm->awaitingCallback)
+					startScaleRequest(algorithm, index);
+			}
+		}
+		else
+		{
+			algorithm->awaitingCallback = false;
+		}
+	}
+
+	pollScale(algorithm);
 }
 
 bool draw(_NT_algorithm* self)
@@ -156,6 +379,9 @@ bool draw(_NT_algorithm* self)
 	const _retunerAlgorithm* algorithm = static_cast<const _retunerAlgorithm*>(self);
 	const retuner::Engine& engine = algorithm->engine;
 	char buff[32];
+
+	NT_drawText(0, 10, "Scale:");
+	NT_drawText(56, 10, algorithm->scaleName[0] ? algorithm->scaleName : "12-TET");
 
 	NT_drawText(0, 20, "Arm:");
 	NT_drawText(40, 20, engine.isArmed() ? "On" : "Off");
@@ -167,13 +393,33 @@ bool draw(_NT_algorithm* self)
 	NT_drawText(0, 40, "Table:");
 	NT_drawText(56, 40, engine.isTableValid() ? "Valid" : "Invalid");
 
-	if (engine.faultState() != retuner::kFaultNone)
+	if (algorithm->scaleError)
+		NT_drawText(0, 50, "Scale load failed");
+	else if (engine.faultState() != retuner::kFaultNone)
 		NT_drawText(0, 50, "Fault: overflow");
 
 	return false;
 }
 
+int parameterString(_NT_algorithm* self, int p, int v, char* buff)
+{
+	(void)self;
+	if (p != kParamScale)
+		return 0;
 
+	_NT_sclInfo info;
+	NT_getSclInfo((uint32_t)(v < 0 ? 0 : v), info);
+	const char* name = (info.name && info.name[0]) ? info.name : "12-TET";
+
+	int length = 0;
+	while (length < kNT_parameterStringSize - 1 && name[length])
+	{
+		buff[length] = name[length];
+		++length;
+	}
+	buff[length] = 0;
+	return length;
+}
 
 } // namespace
 
@@ -191,6 +437,7 @@ static const _NT_factory factory = {
 	.midiRealtime = midiRealtime,
 	.midiMessage = midiMessage,
 	.tags = kNT_tagUtility,
+	.parameterString = parameterString,
 };
 
 #if defined(__arm__)

@@ -2,7 +2,8 @@
 
 Static MIDI retuner for the disting NT, targeting a Knobula Monumatic in its
 documented Omni/Mono voice-per-channel mode. One input MIDI channel, eight
-retuned receiver voices, pitch bend sent before each note-on.
+retuned receiver voices, pitch bend sent before each note-on. Tuning comes
+from a Scala `.scl` file, with a built-in 12-TET fallback.
 
 Player documentation: [docs/retuner.md](docs/retuner.md).
 
@@ -34,13 +35,14 @@ The release object is `plugins/retuner.o`; copy it to the module's
 
 ## Layout
 
-- `src/retuner_core.h` — host-independent note/tuning/voice engine.
-- `src/retuner.cpp` — disting NT adapter (`ThRt`, "Retuner").
+- `src/retuner_core.h` — host-independent scale/note/voice engine.
+- `src/retuner.cpp` — disting NT adapter (`ThRt`, "Retuner") and `.scl` loader.
 - `tests/retuner_core_test.cpp` — native core behavioural tests.
 - `tests/retuner_adapter_test.cpp` — adapter tests against disting NT API stubs.
 - `docs/retuner.md` — player-facing contract and open hardware prerequisites.
 
 ## Status
 
-Research-backed draft implementation. Monumatic bend-range semantics and
-physical device acceptance remain prerequisites; see the player docs.
+Scala tuning, per-channel voices and host/ARM builds are covered by tests.
+Monumatic bend-range semantics and physical device acceptance remain
+prerequisites; see the player docs.
