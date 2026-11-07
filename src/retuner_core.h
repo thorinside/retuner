@@ -332,8 +332,7 @@ public:
 			case 121: /* reset all controllers: panic, never forwarded */
 				panic(kPanicResetControllers, false);
 				break;
-			case 123: /* all notes off */
-				allNotesOff();
+			case 123: /* all notes off: ignored, note-offs own the lifecycle */
 				break;
 			default:
 				break;
@@ -404,19 +403,6 @@ public:
 		send((uint8_t)(0x80 | voice.channel), voice.note, velocity);
 		voice.occupied = 0;
 		record.voice = 0;
-	}
-
-	/* Graceful CC123: release everything but leave the bends alone. */
-	void allNotesOff()
-	{
-		for (int i = 0; i < kChannels; ++i)
-		{
-			if (!voices[i].occupied)
-				continue;
-			send((uint8_t)(0x80 | voices[i].channel), voices[i].note, 0);
-			voices[i].occupied = 0;
-		}
-		clearState();
 	}
 
 	/* Release, silence the receiver and centre bends; optionally disarm. */

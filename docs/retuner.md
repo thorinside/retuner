@@ -151,8 +151,8 @@ a voice, not a master, so the MPE configuration would not describe the receiver.
 - **Ignored:** pitch bend, channel/poly pressure, CC74, CC64/CC66 pedals,
   program changes, other CCs, SysEx, clock and active sensing. Nothing is
   forwarded.
-- **CC123** on the selected channel: graceful all-notes-off. Sends stored
-  note-offs, clears held counts, leaves bends alone.
+- **CC123** on the selected channel: ignored. Note-offs own the note lifecycle;
+  use `Arm` Off for an intentional all-notes-off.
 - **CC120/CC121** on the selected channel: hard panic. The kill sequence
   follows `Output`: Monumatic/MPE send stored note-offs, CC64 = 0, CC120 = 0
   and centred bends; Per Ch Bend sends note-offs, CC120 = 0 and centred bends.

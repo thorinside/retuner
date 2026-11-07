@@ -462,7 +462,7 @@ void testExcludedControllers()
 	check(rec.empty(), "excluded controllers silent");
 }
 
-/* AC4: CC123 releases but leaves bends; panic centres and disarms. */
+/* CC123 is ignored; CC120 clears notes and bends but keeps Arm on. */
 void testAllNotesOffAndPanic()
 {
 	Recorder rec;
@@ -476,11 +476,12 @@ void testAllNotesOffAndPanic()
 
 	rec.clear();
 	engine.processChannelMessage(0xB0, 123, 0);
-	check(rec.messages.size() == 2, "CC123 sends two offs");
-	checkMessage(rec.messages[0], 0x80, 0x3C, 0x00, "CC123 C4 off");
-	checkMessage(rec.messages[1], 0x81, 0x40, 0x00, "CC123 E4 off");
+	check(rec.empty(), "CC123 sends nothing");
 	check(engine.isArmed(), "CC123 leaves armed");
-	check(engine.voicesInUse() == 0, "CC123 clears voices");
+	check(engine.voicesInUse() == 2, "CC123 leaves held notes alone");
+
+	engine.processChannelMessage(0x80, 60, 0);
+	engine.processChannelMessage(0x80, 64, 0);
 
 	/* Ordinary release leaves the bend untouched. */
 	engine.processChannelMessage(0x90, 67, 100);
@@ -492,7 +493,7 @@ void testAllNotesOffAndPanic()
 	engine.processChannelMessage(0x90, 72, 100);
 	rec.clear();
 	engine.processChannelMessage(0xB0, 120, 0);
-	check(engine.isArmed(), "CC120 clears notes but stays armed");
+	check(engine.isArmed(), "CC120 keeps Arm on");
 	check(engine.voicesInUse() == 0, "CC120 clears voices");
 	check(rec.messages.size() >= 3, "panic sends kill sequence");
 	bool sawOff = false, sawSustain = false, sawSoundOff = false, sawCentre = false;
