@@ -60,6 +60,7 @@ int failures = 0;
 
 _NT_sclNote equalTemperamentNotes[12];
 _NT_sclNote justNotes[12];
+_NT_sclNote negativeCentsNotes[2];
 
 void setRatio(_NT_sclNote& note, int32_t numerator, int32_t denominator)
 {
@@ -78,6 +79,9 @@ void resetScaleStub()
 	};
 	for (int i = 0; i < 12; ++i)
 		setRatio(justNotes[i], ratios[i][0], ratios[i][1]);
+
+	negativeCentsNotes[0].octaves = -5.0 / 1200.0;
+	setRatio(negativeCentsNotes[1], 2, 1);
 
 	stub.mounted = true;
 	stub.numScl = 1;
@@ -245,6 +249,71 @@ void testMidiForwarding()
 	check(stub.messages.empty(), "other channel ignored");
 }
 
+/* No card observed yet: the built-in 12-TET table remains armable. */
+void testNoCardFallback()
+{
+	Fixture f;
+	stub.mounted = false;
+	f.changed(0);
+	f.changed(1);
+	f.changed(2);
+	f.values[3] = 1;
+	f.changed(3);
+	check(stub.setCalls == 0, "no-card fallback arms");
+
+	factory()->midiMessage(f.algorithm, 0x90, 60, 100);
+	check(stub.messages.size() == 2, "no-card fallback sends a note");
+	check(stub.messages[0].b0 == 0xE0 && stub.messages[1].b0 == 0x90, "no-card fallback channel 1");
+}
+
+/* A smaller remount library clamps the selector; an armed reload must disarm. */
+void testArmedRemountClampDisarms()
+{
+	Fixture f;
+	stub.numScl = 2;
+	f.step(); /* mount and load the default scale */
+	f.values[1] = 1;
+	f.changed(1);
+	f.values[2] = 200;
+	f.changed(2);
+	f.values[3] = 1;
+	f.changed(3);
+	f.step();
+	check(f.values[3] == 1, "armed before remount");
+
+	f.resetStub();
+	stub.mounted = false;
+	f.step();
+	stub.numScl = 1;
+	stub.mounted = true;
+	f.step();
+
+	check(f.values[3] == 0, "remount clamp disarms");
+	check(stub.setCalls >= 1 && stub.setParameter == (uint32_t)(3 + 7) && stub.setValue == 0,
+	      "remount clamp writes Arm off");
+}
+
+/* Scala permits negative cents; isRatio() must not misdecode them as ratios. */
+void testNegativeCentsScale()
+{
+	Fixture f;
+	stub.notes = negativeCentsNotes;
+	stub.numNotes = 2;
+	stub.scaleName = "negative-cents.scl";
+	f.step(); /* mount and load */
+	f.values[2] = 200;
+	f.changed(2);
+	f.values[3] = 1;
+	f.changed(3);
+	f.resetStub();
+
+	factory()->midiMessage(f.algorithm, 0x90, 61, 100);
+	check(stub.messages.size() == 2, "negative cents sends bend then on");
+	check(stub.messages[0].b0 == 0xE0, "negative cents uses channel 1 bend");
+	check(stub.messages[1].b0 == 0x90 && stub.messages[1].b1 == 0x3C,
+	      "negative cents stays based on middle C, not a misdecoded ratio");
+}
+
 /* nt_helper's community Scala editor matches the parameter name pattern. */
 void testScaleParameterName()
 {
@@ -289,6 +358,8 @@ void testScaleLoadRetunes()
 	Fixture f;
 	stub.notes = justNotes;
 	stub.scaleName = "just.scl";
+	f.step(); /* observe the mounted card */
+	f.resetStub();
 	f.changed(0);
 	f.changed(1);
 	f.changed(2);
@@ -309,7 +380,7 @@ void testDeferredScaleLoad()
 	Fixture f;
 	stub.notes = justNotes;
 	stub.deferCallback = true;
-	f.changed(1);
+	f.step(); /* mount starts the deferred read */
 	check(stub.pendingCallback != nullptr, "read is in flight");
 
 	/* Arming while the scale is still loading must be refused. */
@@ -340,6 +411,7 @@ void testDeferredScaleLoad()
 void testIdenticalScaleReload()
 {
 	Fixture f;
+	f.step(); /* observe the mounted card */
 	f.changed(0);
 	f.changed(1);
 	f.changed(2);
@@ -368,6 +440,7 @@ void testScaleLoadFailureRefusesArm()
 {
 	Fixture f;
 	stub.numNotes = 0;
+	f.step(); /* mount triggers the failed read */
 	f.changed(0);
 	f.changed(1);
 	f.changed(2);
@@ -494,6 +567,9 @@ int main()
 	testArmRefusedOnInvalidTable();
 	testConfigChangeSyncsArm();
 	testMidiForwarding();
+	testNoCardFallback();
+	testArmedRemountClampDisarms();
+	testNegativeCentsScale();
 	testScaleParameterName();
 	testOutputModeForwarding();
 	testScaleLoadRetunes();

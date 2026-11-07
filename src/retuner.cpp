@@ -151,14 +151,30 @@ bool buildScale(const _NT_sclNote* notes, uint32_t numNotes, retuner::Scale& sca
 		double octaves;
 		if (notes[i].isRatio())
 		{
-			/* The parser stores a ratio denominator as a negative int32. */
-			if (notes[i].numeratorValue <= 0 ||
-			    notes[i].denominatorValue >= 0 ||
-			    notes[i].denominatorValue == INT32_MIN)
-				return false;
-			const int32_t numerator = notes[i].numeratorValue;
-			const int32_t denominator = -notes[i].denominatorValue;
-			octaves = log2Positive((double)numerator / (double)denominator);
+			/*
+			 * isRatio() tests the denominator sign, which also matches the sign
+			 * bit of a negative cents double. Scala permits negative cents, so
+			 * decode a plausible small negative double as cents rather than as
+			 * a packed ratio. Genuine ratios produce NaN or an implausible
+			 * double in this union.
+			 */
+			const double asCents = notes[i].octaves;
+			if (isfinite(asCents) && asCents < 0.0 && asCents > -1.0 &&
+			    asCents <= -1e-9)
+			{
+				octaves = asCents;
+			}
+			else
+			{
+				/* The parser stores a ratio denominator as a negative int32. */
+				if (notes[i].numeratorValue <= 0 ||
+				    notes[i].denominatorValue >= 0 ||
+				    notes[i].denominatorValue == INT32_MIN)
+					return false;
+				const int32_t numerator = notes[i].numeratorValue;
+				const int32_t denominator = -notes[i].denominatorValue;
+				octaves = log2Positive((double)numerator / (double)denominator);
+			}
 		}
 		else
 		{
@@ -194,10 +210,19 @@ void applyLoadedScale(_retunerAlgorithm* algorithm)
 
 void startScaleRequest(_retunerAlgorithm* algorithm, int index)
 {
+	if (!algorithm->cardMounted)
+		return;
 	if (index < 0)
 		index = 0;
 	if (index > 32767)
 		index = 32767;
+
+	/* Invalidate only after the old notes are safely released. */
+	if (algorithm->engine.isArmed())
+	{
+		algorithm->engine.disarm();
+		algorithm->armOffPending = true;
+	}
 
 	algorithm->request.index = (uint32_t)index;
 	algorithm->request.error = false;
@@ -225,10 +250,11 @@ void pollScale(_retunerAlgorithm* algorithm)
 		if (algorithm->dirty)
 		{
 			algorithm->dirty = false;
-			applyLoadedScale(algorithm);
+			if (algorithm->cardMounted)
+				applyLoadedScale(algorithm);
 			continue;
 		}
-		if (!algorithm->awaitingCallback &&
+		if (!algorithm->awaitingCallback && algorithm->cardMounted &&
 		    (int)algorithm->request.index != algorithm->pendingScale)
 		{
 			startScaleRequest(algorithm, algorithm->pendingScale);
@@ -316,10 +342,13 @@ void parameterChanged(_NT_algorithm* self, int p)
 		if (index != algorithm->v[kParamScale])
 			syncScale(algorithm, index);
 		algorithm->pendingScale = index;
-		algorithm->engine.invalidateTable();
-		if (!algorithm->awaitingCallback)
-			startScaleRequest(algorithm, algorithm->pendingScale);
-		pollScale(algorithm);
+		if (algorithm->cardMounted)
+		{
+			algorithm->engine.invalidateTable();
+			if (!algorithm->awaitingCallback)
+				startScaleRequest(algorithm, algorithm->pendingScale);
+			pollScale(algorithm);
+		}
 		syncArmIfDisarmed(algorithm);
 	}
 		break;

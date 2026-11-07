@@ -130,8 +130,9 @@ a voice, not a master, so the MPE configuration would not describe the receiver.
 
 ## Voice behaviour
 
-- One selected input channel; eight reserved receiver channels 1–8. Channel 1
-  is a voice, not a master.
+- One selected input channel; eight receiver voices. Monumatic and Per Ch Bend
+  use channels 1–8, with channel 1 as a voice. MPE uses master 1 and members
+  2–9, with no notes or bends on the master.
 - A distinct admitted key consumes one receiver voice. The first velocity is
   kept. Repeated note-ons for the same key increment a held count and do not
   retrigger.
@@ -168,7 +169,10 @@ a voice, not a master, so the MPE configuration would not describe the receiver.
 
 Input panic is a kill sequence whose exact receiver effect must be checked on
 hardware. It keeps the retuner armed; use `Arm` Off for an explicit disable.
-The plugin cannot detect a DIN unplug; it does not use an inactivity timeout.
+Because Arm stays on, an outstanding pre-panic note-off for the same key can
+release a new note using that key; rearm from a quiescent source when that
+matters. The plugin cannot detect a DIN unplug; it does not use an inactivity
+timeout.
 
 ## Routing
 
