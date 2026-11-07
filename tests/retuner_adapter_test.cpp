@@ -245,6 +245,15 @@ void testMidiForwarding()
 	check(stub.messages.empty(), "other channel ignored");
 }
 
+/* nt_helper's community Scala editor matches the parameter name pattern. */
+void testScaleParameterName()
+{
+	Fixture f;
+	const _NT_parameter& scale = f.algorithm->parameters[1];
+	check(std::strcmp(scale.name, "Scale File") == 0, "scale parameter is named Scale File");
+	check(scale.unit == kNT_unitConfirm, "scale parameter uses confirm unit");
+}
+
 /* A loaded .scl file rebuilds the 128-key table. */
 void testScaleLoadRetunes()
 {
@@ -454,6 +463,7 @@ int main()
 	testArmRefusedOnInvalidTable();
 	testConfigChangeSyncsArm();
 	testMidiForwarding();
+	testScaleParameterName();
 	testScaleLoadRetunes();
 	testDeferredScaleLoad();
 	testIdenticalScaleReload();

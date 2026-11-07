@@ -30,7 +30,7 @@ static char const * const enumArm[] = { "Off", "On" };
 /* Bend range is configured in hundredths of a semitone; 0 means unset. */
 static const _NT_parameter parameters[] = {
 	{ .name = "Channel", .min = 1, .max = 16, .def = 1, .unit = kNT_unitNone, .scaling = 0, .enumStrings = NULL },
-	{ .name = "Scale", .min = 0, .max = 32767, .def = 0, .unit = kNT_unitConfirm, .scaling = 0, .enumStrings = NULL },
+	{ .name = "Scale File", .min = 0, .max = 32767, .def = 0, .unit = kNT_unitConfirm, .scaling = 0, .enumStrings = NULL },
 	{ .name = "Bend Range", .min = 0, .max = 4800, .def = 0, .unit = kNT_unitSemitones, .scaling = kNT_scaling100, .enumStrings = NULL },
 	{ .name = "Arm", .min = 0, .max = 1, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = enumArm },
 };

@@ -37,13 +37,13 @@ with the stock microtuned algorithms.
 | Parameter | Default | Range | Meaning |
 | --- | --- | --- | --- |
 | Channel | 1 | 1–16 | The single MIDI channel the retuner listens on. |
-| Scale | 0 (first `.scl`) | `.scl` file index | Scala scale loaded from the card. The parameter text shows the file name. Before any file loads, the built-in 12-TET table is used. |
+| Scale File | 0 (first `.scl`) | `.scl` file index | Scala scale loaded from the card. The parameter text shows the file name. Before any file loads, the built-in 12-TET table is used. |
 | Bend Range | 0 (unset) | 0–48.00 semitones | The receiver's pitch-bend range `R`, in semitones. Must be set before arming. |
 | Arm | Off | Off / On | Arm the retuner. Arming requires a valid table and `R > 0`. |
 
 The plugin starts **disarmed** with `R` unset. Set `Bend Range` to the
-receiver's actual range, choose a `Scale`, and set `Arm` to `On`. Changing
-`Channel`, `Scale` or `Bend Range` while armed sends a panic and disarms.
+receiver's actual range, choose a `Scale File`, and set `Arm` to `On`. Changing
+`Channel`, `Scale File` or `Bend Range` while armed sends a panic and disarms.
 
 Before any `.scl` file has loaded (including when the card is not mounted),
 the built-in 12-TET table is used. A loaded scale stays in memory and remains
