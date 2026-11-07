@@ -6,17 +6,20 @@ the note-on, so a receiver hears the target frequency immediately. It is a
 static microtuner: it does not recognise chords, snap to a scale, or adapt to
 the input.
 
-Tuning comes from a Scala `.scl` file in the disting NT `scl` folder. The
-plugin also has a built-in 12-TET fallback for the case where no scale has been
-selected or the card is not mounted.
+The output profile can be **Monumatic**, generic **Per Ch Bend**, or **Standard
+MPE** for a lower-zone MPE instrument such as a Bitwig MPE synth. Tuning comes
+from a Scala `.scl` file in the disting NT `scl` folder. The plugin also has a
+built-in 12-TET fallback for the case where no scale has been selected or the
+card is not mounted.
 
 The plugin GUID is `ThRt`; the algorithm name is **Retuner**.
 
 ## What it is not
 
 - Not a DAW/computer pass-through. The disting NT does the work on the module.
-- Not a generic MPE master/member transmitter. It is a per-channel bend
-  utility: one voice per MIDI channel 1–8, with no master-channel traffic.
+- Not a full MPE expression bridge. In MPE mode it sends one note and one
+  bend per member channel; it does not forward input pressure, CC74 or the
+  master channel's gestures.
 - Not a transparent expressive bridge. Pitch bend, pressure, CC74, pedals,
   program changes, other CCs, SysEx and clock are not forwarded.
 - Not a `.kbm` importer. It uses the disting NT automatic keyboard mapping
@@ -39,11 +42,13 @@ with the stock microtuned algorithms.
 | Channel | 1 | 1–16 | The single MIDI channel the retuner listens on. |
 | Scale File | 0 (first `.scl`) | `.scl` file index | Scala scale loaded from the card. The parameter text shows the file name. Before any file loads, the built-in 12-TET table is used. |
 | Bend Range | 0 (unset) | 0–48.00 semitones | The receiver's pitch-bend range `R`, in semitones. Must be set before arming. |
+| Output | Monumatic | Monumatic / Per Ch Bend / MPE | Receiver profile and output channel map. |
 | Arm | Off | Off / On | Arm the retuner. Arming requires a valid table and `R > 0`. |
 
-The plugin starts **disarmed** with `R` unset. Set `Bend Range` to the
-receiver's actual range, choose a `Scale File`, and set `Arm` to `On`. Changing
-`Channel`, `Scale File` or `Bend Range` while armed sends a panic and disarms.
+The plugin starts **disarmed** with `R` unset. Choose the `Output` profile, set
+`Bend Range` to the receiver's actual range, choose a `Scale File`, and set
+`Arm` to `On`. Changing `Channel`, `Scale File`, `Bend Range` or `Output` while
+armed sends a panic and disarms.
 
 Before any `.scl` file has loaded (including when the card is not mounted),
 the built-in 12-TET table is used. A loaded scale stays in memory and remains
@@ -94,6 +99,33 @@ For a target pitch `p`, the receiver base note is
 0..16383 only for the representable positive endpoint. Bend is sent LSB
 first. Interior rounding error is at most `100R/16384` cents.
 
+## Output profiles
+
+### Monumatic (default)
+
+Eight voices on MIDI channels 1–8, one voice per channel. Channel 1 is a voice,
+not an MPE master. Panic sends note-offs, CC64 = 0, CC120 = 0 and centred bends
+on channels 1–8. This is the Monumatic Omni/Mono profile.
+
+### Per Ch Bend
+
+The same eight-channel voice map, channels 1–8, for a generic multi-timbral
+receiver or eight mono channels. No MPE configuration is sent. Panic sends
+note-offs, CC120 = 0 and centred bends but omits the Monumatic sustain-off CC64.
+
+### Standard MPE
+
+Lower-zone MPE: master channel 1, member channels 2–9, eight members. Notes and
+bends go to the members only. Arming sends the standard MPE Configuration RPN 6
+(eight members) and Pitch Bend Sensitivity RPN 0 with the configured `Bend
+Range` on each member. The master channel receives no notes or bends. Panic
+sends note-offs, CC64 = 0, CC120 = 0 and centred bends on the members only.
+
+Use this profile for a Bitwig MPE instrument or another lower-zone MPE receiver.
+If the receiver ignores incoming RPN, set its MPE bend range to the same `R`
+manually. Do not select MPE for a Monumatic in Omni/Mono mode: its channel 1 is
+a voice, not a master, so the MPE configuration would not describe the receiver.
+
 ## Voice behaviour
 
 - One selected input channel; eight reserved receiver channels 1–8. Channel 1
@@ -119,9 +151,11 @@ first. Interior rounding error is at most `100R/16384` cents.
   forwarded.
 - **CC123** on the selected channel: graceful all-notes-off. Sends stored
   note-offs, clears held counts, leaves bends alone.
-- **CC120/CC121** on the selected channel: hard panic. Sends stored note-offs,
-  CC64 = 0 and CC120 = 0 on channels 1–8, centres the eight bends, clears
-  state and disarms. CC121 is never forwarded as a receiver reset.
+- **CC120/CC121** on the selected channel: hard panic. The kill sequence
+  follows `Output`: Monumatic/MPE send stored note-offs, CC64 = 0, CC120 = 0
+  and centred bends; Per Ch Bend sends note-offs, CC120 = 0 and centred bends.
+  The channels are 1–8 for Monumatic/Per Ch Bend and members 2–9 for MPE. State
+  clears and the plugin disarms. CC121 is never forwarded as a receiver reset.
 - **Realtime Stop (0xFC) / System Reset (0xFF):** hard panic. Start/Continue do
   not replay notes or rearm.
 - **Overflow, scale change or other configuration change:** hard panic.
@@ -144,14 +178,19 @@ inactivity timeout. Panic/rearm from the owner with the source stopped.
 - Built against disting NT C++ API v14, targeting firmware 1.19.0. Native MIDI
   conversion features date to firmware 1.9.0; that is a feature floor, not a
   claim that this API v14 binary runs on 1.9.
-- The receiver must be a Knobula Monumatic in its documented Omni/Mono mode
-  (one voice per channel 1–8). Its actual firmware, ordinary equal-tempered
-  base tuning and internal temperament/octave stretching off must be recorded
-  first.
+- Monumatic output requires a Knobula Monumatic in its documented Omni/Mono
+  mode (one voice per channel 1–8). Its actual firmware, ordinary
+  equal-tempered base tuning and internal temperament/octave stretching off
+  must be recorded first.
+- MPE output requires a lower-zone MPE receiver. The plugin sends standard RPN
+  6 and RPN 0 setup on arm; the receiver must accept or be configured for the
+  same `Bend Range`. Bitwig MPE operation assumes the receiver is configured
+  with the same member count and bend range.
 - `Bend Range` is the receiver's pitch-bend range `R`. Monumatic's CC22 value
   semantics are undocumented; measure or read the actual range. Do not assume
   ±2 or ±48 and do not borrow Poly Cinematic settings.
-- The plugin does not send CC22/RPN or other speculative setup messages.
+- The plugin does not send CC22. Outside MPE mode it sends no setup RPN; in MPE
+  mode the standard configuration/sensitivity RPNs are sent only on arm.
 - The public API does not document callback serialisation or a guaranteed
   unload/global-bypass cleanup hook. The plugin assumes the host serialises its
   MIDI/parameter callbacks; verify this on the target firmware before a

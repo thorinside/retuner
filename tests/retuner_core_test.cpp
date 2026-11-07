@@ -322,6 +322,75 @@ void testUnmappedKey()
 	check(rec.messages.size() == 2, "unmapped off does not kill mapped key");
 }
 
+/* Output modes choose the receiver channel map and MPE setup. */
+void testOutputModes()
+{
+	Recorder rec;
+	retuner::Engine engine;
+	engine.setOutput(rec.out());
+	engine.configureScale(retuner::equalTemperamentScale(), 2.0);
+
+	/* Per-channel bend uses channels 1-8 and omits the Monumatic CC64. */
+	check(engine.setOutputMode(retuner::kOutputPerChannel), "select per-channel mode");
+	engine.arm();
+	engine.processChannelMessage(0x90, 60, 100);
+	check(rec.messages.size() == 2, "per-channel bend then on");
+	checkMessage(rec.messages[0], 0xE0, 0x00, 0x40, "per-channel bend channel 1");
+	checkMessage(rec.messages[1], 0x90, 0x3C, 0x64, "per-channel note channel 1");
+
+	rec.clear();
+	engine.processChannelMessage(0xB0, 120, 0);
+	bool sawSustain = false;
+	for (const Message& m : rec.messages)
+		if (m.b0 == 0xB0 && m.b1 == 64)
+			sawSustain = true;
+	check(!sawSustain, "per-channel panic omits CC64");
+	check(engine.mode() == retuner::kOutputPerChannel, "per-channel mode retained");
+
+	/* Standard MPE: master 1, eight members 2-9, configured on arm. */
+	retuner::Engine mpe;
+	mpe.setOutput(rec.out());
+	mpe.configureScale(retuner::equalTemperamentScale(), 2.0);
+	check(mpe.setOutputMode(retuner::kOutputMpe), "select MPE mode");
+	rec.clear();
+	check(mpe.arm(), "arm MPE");
+	check(rec.messages.size() == 35, "MPE setup messages");
+	checkMessage(rec.messages[0], 0xB0, 101, 0, "MPE RPN MSB on master");
+	checkMessage(rec.messages[1], 0xB0, 100, 6, "MPE configuration RPN");
+	checkMessage(rec.messages[2], 0xB0, 6, 8, "eight MPE members");
+	checkMessage(rec.messages[3], 0xB1, 101, 0, "member bend RPN MSB");
+	checkMessage(rec.messages[4], 0xB1, 100, 0, "member bend RPN LSB");
+	checkMessage(rec.messages[5], 0xB1, 6, 2, "member bend range semitones");
+	checkMessage(rec.messages[6], 0xB1, 38, 0, "member bend range cents");
+
+	rec.clear();
+	mpe.processChannelMessage(0x90, 60, 100);
+	mpe.processChannelMessage(0x90, 64, 100);
+	check(rec.messages.size() == 4, "two MPE notes");
+	checkMessage(rec.messages[0], 0xE1, 0x00, 0x40, "MPE first bend on channel 2");
+	checkMessage(rec.messages[1], 0x91, 0x3C, 0x64, "MPE first note on channel 2");
+	checkMessage(rec.messages[2], 0xE2, 0x00, 0x40, "MPE second bend on channel 3");
+	checkMessage(rec.messages[3], 0x92, 0x40, 0x64, "MPE second note on channel 3");
+
+	rec.clear();
+	mpe.processChannelMessage(0xB0, 120, 0);
+	bool usedMaster = false;
+	for (const Message& m : rec.messages)
+		if ((m.b0 & 0x0F) == 0)
+			usedMaster = true;
+	check(!usedMaster, "MPE panic leaves master channel silent");
+	checkMessage(rec.messages[0], 0x81, 0x3C, 0x00, "MPE panic off on member 2");
+
+	/* Changing output mode while armed panics and disarms. */
+	rec.clear();
+	mpe.arm();
+	mpe.processChannelMessage(0x90, 60, 100);
+	rec.clear();
+	check(mpe.setOutputMode(retuner::kOutputMonumatic), "mode change reported");
+	check(!mpe.isArmed(), "mode change disarms");
+	check(!rec.empty(), "mode change panics");
+}
+
 /* AC3: eight voices, ninth key dropped, then admitted after capacity frees. */
 void testOverflowAndDrop()
 {
@@ -555,6 +624,7 @@ int main()
 	testBendBeforeOn();
 	testRepeatsAndOffs();
 	testUnmappedKey();
+	testOutputModes();
 	testOverflowAndDrop();
 	testCountOverflow();
 	testExcludedControllers();

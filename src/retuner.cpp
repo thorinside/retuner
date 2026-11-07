@@ -23,9 +23,13 @@ enum
 	kParamScale,
 	kParamBendRange,
 	kParamArm,
+	kParamOutput,
+
+	kNumParams,
 };
 
 static char const * const enumArm[] = { "Off", "On" };
+static char const * const enumOutput[] = { "Monumatic", "Per Ch Bend", "MPE" };
 
 /* Bend range is configured in hundredths of a semitone; 0 means unset. */
 static const _NT_parameter parameters[] = {
@@ -33,9 +37,10 @@ static const _NT_parameter parameters[] = {
 	{ .name = "Scale File", .min = 0, .max = 32767, .def = 0, .unit = kNT_unitConfirm, .scaling = 0, .enumStrings = NULL },
 	{ .name = "Bend Range", .min = 0, .max = 4800, .def = 0, .unit = kNT_unitSemitones, .scaling = kNT_scaling100, .enumStrings = NULL },
 	{ .name = "Arm", .min = 0, .max = 1, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = enumArm },
+	{ .name = "Output", .min = 0, .max = 2, .def = 0, .unit = kNT_unitEnum, .scaling = 0, .enumStrings = enumOutput },
 };
 
-static const uint8_t page1[] = { kParamChannel, kParamScale, kParamBendRange, kParamArm };
+static const uint8_t page1[] = { kParamChannel, kParamScale, kParamBendRange, kParamOutput, kParamArm };
 
 static const _NT_parameterPage pages[] = {
 	{ .name = "Retuner", .numParams = ARRAY_SIZE(page1), .params = page1 },
@@ -54,7 +59,7 @@ struct _retunerAlgorithm : public _NT_algorithm
 		  dirty(false), scaleError(false) {}
 
 	retuner::Engine engine;
-	_NT_parameter params[kParamArm + 1];
+	_NT_parameter params[kNumParams];
 	bool syncing;
 
 	_NT_sclRequest request;
@@ -313,6 +318,10 @@ void parameterChanged(_NT_algorithm* self, int p)
 		pollScale(algorithm);
 		syncArmIfDisarmed(algorithm);
 	}
+		break;
+	case kParamOutput:
+		algorithm->engine.setOutputMode((retuner::OutputMode)algorithm->v[kParamOutput]);
+		syncArmIfDisarmed(algorithm);
 		break;
 	case kParamBendRange:
 		algorithm->engine.configureBendRange(algorithm->v[kParamBendRange] / 100.0);

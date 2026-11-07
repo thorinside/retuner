@@ -37,6 +37,13 @@ constexpr uint32_t fourCc(char a, char b, char c, char d)
 /* thorinside namespace, algorithm "Rt" (retuner). */
 constexpr uint32_t kGuid = fourCc('T', 'h', 'R', 't');
 
+enum OutputMode
+{
+	kOutputMonumatic = 0,
+	kOutputPerChannel = 1,
+	kOutputMpe = 2,
+};
+
 enum Fault
 {
 	kFaultNone = 0,
@@ -171,9 +178,10 @@ class Engine
 {
 public:
 	Engine()
-		: output(), selectedChannel(0), scale(equalTemperamentScale()),
-		  bendRange(0.0), configured(false), tableValid(false), armed(false),
-		  fault(kFaultNone), error(kTableBendUnset)
+		: output(), selectedChannel(0), outputMode(kOutputMonumatic),
+		  scale(equalTemperamentScale()), bendRange(0.0), configured(false),
+		  tableValid(false), armed(false), fault(kFaultNone),
+		  error(kTableBendUnset)
 	{
 		clearState();
 		rebuild();
@@ -182,6 +190,7 @@ public:
 	void setOutput(MidiOut out) { output = out; }
 
 	int channel() const { return selectedChannel; }
+	OutputMode mode() const { return outputMode; }
 	const Scale& currentScale() const { return scale; }
 	double bendRangeSemitones() const { return bendRange; }
 	bool isArmed() const { return armed; }
@@ -211,6 +220,20 @@ public:
 		if (armed)
 			panic();
 		selectedChannel = channelIndex;
+		return true;
+	}
+
+	bool setOutputMode(OutputMode newMode)
+	{
+		if (newMode < kOutputMonumatic)
+			newMode = kOutputMonumatic;
+		if (newMode > kOutputMpe)
+			newMode = kOutputMpe;
+		if (newMode == outputMode)
+			return false;
+		if (armed)
+			panic();
+		outputMode = newMode;
 		return true;
 	}
 
@@ -257,6 +280,8 @@ public:
 		clearState();
 		armed = true;
 		fault = kFaultNone;
+		if (outputMode == kOutputMpe)
+			sendMpeSetup();
 		return true;
 	}
 
@@ -331,16 +356,17 @@ public:
 			if (slot >= 0)
 			{
 				const Target& target_ = table[key];
+				const int channel = outputChannel(slot);
 				Voice& voice = voices[slot];
 				voice.occupied = 1;
-				voice.channel = (uint8_t)slot;
+				voice.channel = (uint8_t)channel;
 				voice.note = target_.note;
 				voice.key = key;
 				record.voice = (uint8_t)(slot + 1);
 
-				send((uint8_t)(0xE0 | slot), (uint8_t)(target_.bend & 0x7F),
+				send((uint8_t)(0xE0 | channel), (uint8_t)(target_.bend & 0x7F),
 				     (uint8_t)(target_.bend >> 7));
-				send((uint8_t)(0x90 | slot), target_.note, velocity);
+				send((uint8_t)(0x90 | channel), target_.note, velocity);
 			}
 		}
 		++record.count;
@@ -381,6 +407,7 @@ public:
 	/* Hard panic: release, silence the receiver, centre bends, disarm. */
 	void panic()
 	{
+		const int base = outputBase();
 		for (int i = 0; i < kChannels; ++i)
 		{
 			if (voices[i].occupied)
@@ -388,17 +415,58 @@ public:
 				send((uint8_t)(0x80 | voices[i].channel), voices[i].note, 0);
 				voices[i].occupied = 0;
 			}
-			send((uint8_t)(0xB0 | i), 64, 0);  /* sustain off */
-			send((uint8_t)(0xB0 | i), 120, 0); /* all sound off */
+			if (outputMode != kOutputPerChannel)
+				send((uint8_t)(0xB0 | (base + i)), 64, 0);  /* sustain off */
+			send((uint8_t)(0xB0 | (base + i)), 120, 0); /* all sound off */
 		}
 		for (int i = 0; i < kChannels; ++i)
-			send((uint8_t)(0xE0 | i), 0, 64);
+			send((uint8_t)(0xE0 | (base + i)), 0, 64);
 
 		clearState();
 		armed = false;
 	}
 
 private:
+	int outputBase() const
+	{
+		return outputMode == kOutputMpe ? 1 : 0;
+	}
+
+	int outputChannel(int slot) const
+	{
+		return outputBase() + slot;
+	}
+
+	void sendMpeSetup()
+	{
+		/* Lower zone, master channel 1: eight member channels 2-9. */
+		send(0xB0, 101, 0);
+		send(0xB0, 100, 6);
+		send(0xB0, 6, (uint8_t)kChannels);
+
+		int semitones = (int)bendRange;
+		int cents = (int)((bendRange - (double)semitones) * 100.0 + 0.5);
+		if (cents >= 100)
+		{
+			++semitones;
+			cents = 0;
+		}
+		if (semitones > 127)
+		{
+			semitones = 127;
+			cents = 0;
+		}
+
+		for (int i = 0; i < kChannels; ++i)
+		{
+			const uint8_t channel = (uint8_t)(1 + i);
+			send((uint8_t)(0xB0 | channel), 101, 0);
+			send((uint8_t)(0xB0 | channel), 100, 0);
+			send((uint8_t)(0xB0 | channel), 6, (uint8_t)semitones);
+			send((uint8_t)(0xB0 | channel), 38, (uint8_t)cents);
+		}
+	}
+
 	static bool sameScale(const Scale& a, const Scale& b)
 	{
 		if (a.count != b.count)
@@ -502,6 +570,7 @@ private:
 	Key keys[kKeys];
 	Voice voices[kChannels];
 	int selectedChannel;
+	OutputMode outputMode;
 	Scale scale;
 	double bendRange;
 	bool configured;

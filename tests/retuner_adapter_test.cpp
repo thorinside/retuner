@@ -108,7 +108,7 @@ const _NT_factory* factory()
 struct Fixture
 {
 	_NT_algorithm* algorithm;
-	int16_t values[4];
+	int16_t values[5];
 
 	Fixture()
 	{
@@ -123,6 +123,7 @@ struct Fixture
 		values[1] = 0;   /* .scl index 0 */
 		values[2] = 200; /* 2.00 semitones */
 		values[3] = 0;   /* disarmed */
+		values[4] = 0;   /* Monumatic output */
 		algorithm->v = values;
 		stub.algorithm = algorithm;
 	}
@@ -252,6 +253,34 @@ void testScaleParameterName()
 	const _NT_parameter& scale = f.algorithm->parameters[1];
 	check(std::strcmp(scale.name, "Scale File") == 0, "scale parameter is named Scale File");
 	check(scale.unit == kNT_unitConfirm, "scale parameter uses confirm unit");
+
+	const _NT_parameter& output = f.algorithm->parameters[4];
+	check(std::strcmp(output.name, "Output") == 0, "output parameter present");
+	check(output.max == 2, "output parameter has three modes");
+}
+
+/* The Output parameter selects the MPE channel map. */
+void testOutputModeForwarding()
+{
+	Fixture f;
+	f.changed(0);
+	f.changed(1);
+	f.changed(2);
+	f.values[4] = 2; /* MPE */
+	f.changed(4);
+	f.values[3] = 1;
+	f.changed(3);
+	f.resetStub();
+
+	factory()->midiMessage(f.algorithm, 0x90, 60, 100);
+	check(stub.messages.size() == 2, "MPE sends bend then on");
+	check(stub.messages[0].b0 == 0xE1 && stub.messages[1].b0 == 0x91, "MPE uses member channel 2");
+
+	/* Changing output while armed must push Arm back to Off. */
+	f.resetStub();
+	f.values[4] = 0;
+	f.changed(4);
+	check(stub.setCalls == 1 && stub.setValue == 0, "output change syncs Arm off");
 }
 
 /* A loaded .scl file rebuilds the 128-key table. */
@@ -377,7 +406,7 @@ void NT_setParameterFromUi(uint32_t algorithmIndex, uint32_t parameter, int16_t 
 	if (stub.algorithm && parameter >= stub.parameterOffset)
 	{
 		const int p = (int)(parameter - stub.parameterOffset);
-		if (p >= 0 && p < 4)
+		if (p >= 0 && p < 5)
 		{
 			const_cast<int16_t*>(stub.algorithm->v)[p] = value;
 			factory()->parameterChanged(stub.algorithm, p);
@@ -464,6 +493,7 @@ int main()
 	testConfigChangeSyncsArm();
 	testMidiForwarding();
 	testScaleParameterName();
+	testOutputModeForwarding();
 	testScaleLoadRetunes();
 	testDeferredScaleLoad();
 	testIdenticalScaleReload();
