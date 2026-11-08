@@ -84,6 +84,25 @@ test:
 	@./build/retuner_core_test
 	@./build/retuner_adapter_test
 
+# Native host build for nt_emu / VCV Rack (not part of the hardware build)
+HOST_CXX ?= clang++
+ifeq ($(UNAME_S),Darwin)
+	HOST_DYLIB_EXT := dylib
+	HOST_DYLIB_LDFLAGS := -dynamiclib -undefined dynamic_lookup
+else
+	HOST_DYLIB_EXT := so
+	HOST_DYLIB_LDFLAGS := -shared
+endif
+HOST_DYLIB := $(OUTPUT_DIR)/$(PLUGIN_NAME).$(HOST_DYLIB_EXT)
+HOST_DYLIB_FLAGS := -std=c++11 -O2 -fPIC -Wall -Wextra -Werror -fno-rtti -fno-exceptions
+
+dylib: $(HOST_DYLIB)
+
+$(HOST_DYLIB): $(SOURCES)
+	@mkdir -p $(OUTPUT_DIR)
+	$(HOST_CXX) $(HOST_DYLIB_FLAGS) $(INCLUDES) $(HOST_DYLIB_LDFLAGS) -o $@ $(SOURCES)
+	@echo "Built host plugin: $@"
+
 verify: test
 	@$(MAKE) TARGET=hardware
 	@$(MAKE) check TARGET=hardware
@@ -121,4 +140,4 @@ endif
 clean:
 	rm -rf $(BUILD_DIR) $(OUTPUT_DIR)
 
-.PHONY: all hardware test verify check size inspect clean
+.PHONY: all hardware test dylib verify check size inspect clean
