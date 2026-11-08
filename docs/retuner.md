@@ -120,10 +120,16 @@ On the Monumatic itself:
 
 1. Hold **Shift** and turn **Resonance** fully down until the MIDI channel reads
    **All / Omni / MPE**. Do not leave it on a single MIDI channel.
-2. Press **Mono/Poly** until the LED is red (Mono mode). Monumatic then assigns
-   one voice per MIDI channel 1–8.
-3. Use the supplied **TRS-A** MIDI cable/adapter.
-4. Match its pitch-bend range to the Retuner’s `Bend Range`.
+2. Release Shift, then press **Mono/Poly** until the LED is red (Mono mode).
+   Holding Shift while pressing Mono toggles chorus instead. Monumatic then
+   assigns one voice per MIDI channel 1–8.
+3. Turn off the internal Just Intonation/temperament and octave stretching:
+   hold **Shift** and turn **Detune fully counter-clockwise**.
+4. Make sure chord playback is off: the **Trigger LED must not be white**.
+   Press Trigger to leave chord mode.
+5. Use the supplied **TRS-A** MIDI cable/adapter.
+6. Match its pitch-bend range to the Retuner’s `Bend Range`.
+7. For a chromatic test, choose a 12-note `.scl` file.
 
 Without Omni plus Mono, per-channel notes and bends will not address eight
 independent voices.
