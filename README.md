@@ -47,3 +47,7 @@ The release object is `plugins/retuner.o`; copy it to the module's
 Scala tuning, Monumatic/per-channel/MPE output, and host/ARM builds are covered
 by tests. Receiver bend-range semantics and physical device acceptance remain
 prerequisites; see the player docs.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
